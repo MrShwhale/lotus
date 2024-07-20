@@ -2,11 +2,16 @@ use regex::Regex;
 use reqwest::blocking;
 use scraper::{Html, Selector};
 use std::{
+    cell::UnsafeCell,
     collections::HashSet,
     fmt::{Debug, Display},
-    sync::{mpsc::{self, Receiver, Sender, RecvError, SendError}, Arc, Mutex},
-    thread::{self, JoinHandle},
-    time::Duration
+    mem,
+    sync::{
+        mpsc::{self, Receiver, RecvError, SendError, Sender},
+        Arc, Mutex,
+    },
+    thread,
+    time::Duration,
 };
 
 const TAG_PREFIX: &str = "https://scp-wiki.wikidot.com/system:page-tags/tag/";
@@ -21,7 +26,7 @@ enum ThreadResponse {
     VoteRequest(usize),
     ArticleRequest(usize),
     EndRequest,
-    Alright
+    Alright,
 }
 
 /// Holds information about the errors which can happen while web scraping
@@ -70,8 +75,10 @@ impl Debug for ScrapeError {
             ScrapeError::RegexError => "There was an error in the regex.",
             ScrapeError::WebError => "There was an error in a web request.",
             ScrapeError::RuntimeError => "There was an error in setting up the runtime.",
-            ScrapeError::MessagingError=> "There was an error in sending a message between threads.",
-            ScrapeError::ThreadError=> "There was an error in one of the threads.",
+            ScrapeError::MessagingError => {
+                "There was an error in sending a message between threads."
+            }
+            ScrapeError::ThreadError => "There was an error in one of the threads.",
         };
 
         write!(f, "{}", message)
@@ -183,64 +190,115 @@ impl Scraper {
             users: HashSet::new(),
             tags: Vec::new(),
         };
-        
+
         let mut next_article = 0;
         let num_articles = scraped_info.articles.len();
-        let num_threads = self.settings.max_threads; 
+        let num_threads = self.settings.max_threads;
         let wait_time = Duration::from_millis(1000 / self.settings.requests_per_second);
 
         // Create the message passing situation
-        let (main_tx, main_rx): (Sender<ThreadResponse>, Receiver<ThreadResponse>) = mpsc::channel();
+        let (main_tx, main_rx): (Sender<ThreadResponse>, Receiver<ThreadResponse>) =
+            mpsc::channel();
         let (thread_txs, thread_rxs): (Vec<_>, Vec<_>) = (0..num_threads)
             .map(|_| {
-                let thread_channel: (Sender<ThreadResponse>, Receiver<ThreadResponse>) = mpsc::channel();
+                let thread_channel: (Sender<ThreadResponse>, Receiver<ThreadResponse>) =
+                    mpsc::channel();
                 thread_channel
-            }).unzip();
+            })
+            .unzip();
 
-        // Create the Mutex setup
-        // CONS removing this and doing everything unsafely since you know that there will never be
-        // a data race
-        let articles_arc = Arc::new(&mut scraped_info.articles);
+        // Create an unsafe reference here
+        let articles_arc = Arc::new(&scraped_info.articles);
 
         // Create the threads
-        let handles = create_thread_list(thread_rxs, main_tx, articles_arc.clone());
+        thread::scope(|scope| {
+            thread_rxs.into_iter().enumerate().for_each(|(id, thread_rx)| {
+                let articles_copy = articles_arc.clone();
+                let main_tx = main_tx.clone();
+                scope.spawn(move || {
+                    // CONS not doing this with blocking since there is probably a better way asyncronously
+                    // but we all know how that went
+                    let client = blocking::Client::new();
+                    loop {
+                        // Tell main which thread needs an article
+                        main_tx
+                            .send(ThreadResponse::ArticleRequest(id))
+                            .expect("The reciever should never be deallocated.");
 
-        while next_article < num_articles {
-            // Wait for a perm request
-            let response = main_rx.recv()?;
-            match response {
-                ThreadResponse::VoteRequest(id) => thread_txs.get(id).expect("ID should never be OOB.").send(ThreadResponse::Alright)?,
-                ThreadResponse::ArticleRequest(id) => thread_txs.get(id).expect("ID should never be OOB.").send(ThreadResponse::ArticleRequest(next_article))?,
-                // Threads can only send the above requests
-                _ => unreachable!()
-            };
+                        // Wait for a response
+                        let article_index = match thread_rx
+                            .recv()
+                            .expect("The Sender should never be disconnected.")
+                        {
+                            ThreadResponse::ArticleRequest(article_id) => article_id,
+                            ThreadResponse::EndRequest => {
+                                main_tx
+                                    .send(ThreadResponse::Alright)
+                                    .expect("The reciever should never be deallocated.");
+                                break;
+                            }
+                            // Main will only send the above responses
+                            _ => unreachable!(),
+                        };
 
-            next_article += 1;
+                        // Gets a reference to the url string of the selected article
+                        let url: &String = unsafe {
+                            let unsafe_articles = articles_copy
+                                .get(article_index)
+                                .expect("This should never be OOB");
+                            let raw_article = unsafe_articles as *const Article;
+                            &(*raw_article).url
+                        };
 
-            // Wait until the next web request can be sent according to settings
-            thread::sleep(wait_time);
-        }
+                        // Make the article request
+                        // TODO add limited retry support
 
-        // Ask threads to stop
-        for thread_tx in thread_txs.iter() {
-            thread_tx.send(ThreadResponse::EndRequest)?;
-        }
+                        println!("THREAD {}: URL TO SCRAPE: {:?}", id, url);
+                        // Parse the article
+                        // Update the article
+                        // Make the vote request
+                        // Update the article
+                    }
+                });
+            });
 
-        // Wait for all to stop
-        let mut num_alive = num_threads;
-        while num_alive > 0 {
-            main_rx.recv()?;
-            num_alive -= 1;
-        }
+            // TODO add error checking below this point
+            while next_article < num_articles {
+                // Wait for a perm request
+                let response = main_rx.recv().unwrap();
+                match response {
+                    ThreadResponse::VoteRequest(id) => thread_txs
+                        .get(id)
+                        .expect("ID should never be OOB.")
+                        .send(ThreadResponse::Alright)
+                        .unwrap(),
+                    ThreadResponse::ArticleRequest(id) => thread_txs
+                        .get(id)
+                        .expect("ID should never be OOB.")
+                        .send(ThreadResponse::ArticleRequest(next_article))
+                        .unwrap(),
+                    // Threads can only send the above requests
+                    _ => unreachable!(),
+                };
 
-        // Join all handles
-        for handle in handles {
-            // TODO maybe rewrite with ?
-            match handle.join() {
-                Ok(_) => continue,
-                Err(_) => return Err(ScrapeError::ThreadError)
-            };
-        }
+                next_article += 1;
+
+                // Wait until the next web request can be sent according to settings
+                thread::sleep(wait_time);
+            }
+
+            // Ask threads to stop
+            for thread_tx in thread_txs.iter() {
+                thread_tx.send(ThreadResponse::EndRequest).unwrap();
+            }
+
+            // Wait for all to stop
+            let mut num_alive = num_threads;
+            while num_alive > 0 {
+                main_rx.recv().unwrap();
+                num_alive -= 1;
+            }
+        });
 
         Ok(scraped_info)
     }
@@ -270,7 +328,11 @@ impl Scraper {
     /// Does not add directly to the Vec to make multithreading easy.
     /// This is blocking since this should be run before starting the real
     /// scraper and should have a very limited number of requests.
-    fn extract_links_from_syspage(&mut self, client: &blocking::Client, url: &String) -> Result<Vec<Article>, ScrapeError> {
+    fn extract_links_from_syspage(
+        &mut self,
+        client: &blocking::Client,
+        url: &String,
+    ) -> Result<Vec<Article>, ScrapeError> {
         self.num_requests_sent += 1;
         let response = client.get(url).send()?;
         let document = Html::parse_document(response.text()?.as_str());
@@ -278,8 +340,8 @@ impl Scraper {
             .expect("hardcoded selector, shouldn't fail");
         let page_elements = document.select(&page_item);
 
-        let name_pattern = Regex::new(r#"<a href="(.+)">(.+)+</a>"#)
-            .expect("hardcoded regex, shouldn't fail");
+        let name_pattern =
+            Regex::new(r#"<a href="(.+)">(.+)+</a>"#).expect("hardcoded regex, shouldn't fail");
 
         let mut pages = Vec::new();
         for page in page_elements {
@@ -292,7 +354,11 @@ impl Scraper {
             };
 
             let url = match captures.get(1) {
-                Some(url) => String::from(url.as_str().get(1..).expect("Valid links should always have more than 1 char.")),
+                Some(url) => String::from(
+                    url.as_str()
+                        .get(1..)
+                        .expect("Valid links should always have more than 1 char."),
+                ),
                 None => return Err(ScrapeError::RegexError),
             };
 
@@ -329,43 +395,4 @@ impl Scraper {
     pub fn schedule_scrape(&mut self) -> Result<(), ScrapeError> {
         Ok(())
     }
-}
-
-fn create_thread_list(thread_rxs: Vec<Receiver<ThreadResponse>>, main_tx: Sender<ThreadResponse>, articles_arc: Arc<&mut Vec<Article>>) -> Vec<JoinHandle<()>> {
-    thread_rxs
-        .into_iter()
-        .enumerate()
-        .map(|(id, thread_rx)| {
-            let main_tx = main_tx.clone();
-            thread::spawn(move || {
-                // CONS not doing this with blocking since there is probably a better way asyncronously
-                // but we all know how that went
-                let client = blocking::Client::new();
-                loop {
-                    // Tell main which thread needs an article
-                    main_tx.send(ThreadResponse::ArticleRequest(id)).expect("The reciever should never be deallocated.");
-
-                    // Wait for a response
-                    let article_index = match thread_rx.recv().expect("The Sender should never be disconnected.") {
-                        ThreadResponse::ArticleRequest(article_id) => article_id,
-                        ThreadResponse::EndRequest => {
-                            main_tx.send(ThreadResponse::Alright).expect("The reciever should never be deallocated.");
-                            break;
-                        }
-                        // Main will only send the above responses
-                        _ => unreachable!()
-                    };
-
-                    // Make the article request
-                    // TODO add limited retry support
-                    let article = articles_arc.get_mut(article_index).expect("This should never OOB.");
-                    let text = client.get(article.url).send().unwrap().text().unwrap();
-                    // Parse the article
-                    // Update the article
-                    // Make the vote request
-                    // Update the article
-                }
-            })
-        })
-        .collect()
 }
