@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+csv = "1.3.0"
 http = "1.1.0"
 parking_lot = "0.12.3"
 regex = "1.10.5"
-reqwest = { version = "0.12.5", features = ["blocking"] }
+reqwest = { version = "0.12.5", features = ["blocking", "charset", "json"] }
 scraper = "0.19.1"
+serde = { version = "1.0.204", features = ["derive"] }

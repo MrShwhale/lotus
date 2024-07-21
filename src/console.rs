@@ -77,7 +77,7 @@ fn web_scraper_console(scp_scraper: &mut scraper::Scraper) {
             Ok(ConsoleResponse::FunctionSuccess) => {},
             Ok(ConsoleResponse::Quit) => break,
             Ok(ConsoleResponse::Incomprehensible) => println!("I do not understand that."),
-            Err(_error) => todo!(),
+            Err(error) => println!("{:?}", error),
         }
 
         input.clear();
