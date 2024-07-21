@@ -2,23 +2,27 @@ use regex::Regex;
 use reqwest::blocking;
 use scraper::{Html, Selector};
 use std::{
-    cell::UnsafeCell,
     collections::HashSet,
     fmt::{Debug, Display},
-    mem,
     sync::{
         mpsc::{self, Receiver, RecvError, SendError, Sender},
-        Arc, Mutex,
+        Arc,
     },
     thread,
     time::Duration,
 };
+
+use parking_lot::{Mutex, RwLock};
 
 const TAG_PREFIX: &str = "https://scp-wiki.wikidot.com/system:page-tags/tag/";
 // const TAG_TYPES: [&str; 4] = ["scp", "tale", "hub", "goi-format"];
 const TAG_TYPES: [&str; 1] = ["hub"];
 
 const WIKI_PREFIX: &str = "https://scp-wiki.net/";
+
+// api token found in https://github.com/scp-data/scp_crawler
+// It is not a real api token, just meant to placehold
+const API_TOKEN: &str = "123456";
 
 type ID = u64;
 
@@ -27,6 +31,7 @@ enum ThreadResponse {
     ArticleRequest(usize),
     EndRequest,
     Alright,
+    UserInfo(User),
 }
 
 /// Holds information about the errors which can happen while web scraping
@@ -87,7 +92,7 @@ impl Debug for ScrapeError {
 
 /// Holds basic information about an article on the wiki
 #[derive(Debug)]
-struct Article {
+pub struct Article {
     /// The name of the article, user-facing
     name: String,
     /// The url suffix at which the page can be found
@@ -101,8 +106,8 @@ struct Article {
 }
 
 /// Holds basic information about a user on the wiki
-#[derive(Debug)]
-struct User {
+#[derive(Debug, Hash)]
+pub struct User {
     /// The name of the user, user-facing
     name: String,
     /// The url suffix at which the user's page can be found
@@ -111,10 +116,19 @@ struct User {
     user_id: ID,
 }
 
+impl PartialEq for User {
+    fn eq(&self, other: &Self) -> bool {
+        self.user_id == other.user_id
+    }
+}
+
+impl Eq for User {}
+
 /// Holds all information that is recorded during a scrape
 pub struct ScrapeInfo {
     articles: Vec<Article>,
     users: HashSet<User>,
+    // CONS replacing with something faster
     tags: Vec<String>,
 }
 
@@ -125,13 +139,9 @@ pub struct Scraper {
     settings: ScraperSettings,
     /// If the scraper is currently scraping
     running: bool,
-    /// Number of requests which have been sent
-    num_requests_sent: u32,
 }
 
 pub struct ScraperSettings {
-    /// String to use when accessing the SCP api
-    api_token: String,
     /// Level of detail to log
     log_level: u8,
     /// How to display logs (bitmap)
@@ -139,7 +149,7 @@ pub struct ScraperSettings {
     /// Maximum number of requests to send. Negative to disable.
     max_requests: i32,
     /// Maximum number of requests to send each second
-    requests_per_second: u64,
+    requests_per_second: f64,
     /// Maximum number of additional system threads to create
     max_threads: usize,
 }
@@ -147,54 +157,47 @@ pub struct ScraperSettings {
 impl Scraper {
     pub fn new() -> Scraper {
         Scraper {
-            // api token found in https://github.com/scp-data/scp_crawler
-            // It is not a real api token, just meant to placehold
             settings: ScraperSettings {
-                api_token: String::from("123456"),
                 log_level: 1,
                 log_method: 3,
                 max_requests: -1,
-                requests_per_second: 8,
+                requests_per_second: 0.125,
                 max_threads: 32,
             },
             running: false,
-            num_requests_sent: 0,
         }
     }
 
     /// Scrapes the full SCP wiki and records the information in a format
     /// which the rest of this program can use.
     pub fn scrape(&mut self) -> Result<ScrapeInfo, ScrapeError> {
-        // Requests are only saved per-scrape
-        self.num_requests_sent = 0;
-
         // Get the list of articles to be scraped on the wiki
+        println!("Getting all the list of pages...");
         let scrape_list = self.add_all_pages()?;
 
+        // Scrape the tags
+        println!("Getting the list of tags...");
+        let tag_group = self.add_all_tags()?;
+
         // Actually scrape each article
-        let scraped_info = self.scrape_pages(scrape_list)?;
+        println!("Scraping the pages...");
+        let scraped_info = self.scrape_pages(scrape_list, tag_group)?;
 
         Ok(scraped_info)
     }
 
     /// Scrapes the links to the given articles, overwriting existing data in each element
-    fn scrape_pages(&self, scrape_list: Vec<Article>) -> Result<ScrapeInfo, ScrapeError> {
-        // Spawn some number of threads
-        // This will cap the number of concurrent web requests sent out at once
-        // Each thread will get a mutable reference to the article it needs to fill in
-        // Once finished, it will send a message to the main thread, which will pass it a new
-        // article to review
-
-        let mut scraped_info = ScrapeInfo {
-            articles: scrape_list,
-            users: HashSet::new(),
-            tags: Vec::new(),
-        };
-
+    fn scrape_pages(
+        &self,
+        mut articles: Vec<Mutex<Article>>,
+        mut tags: Vec<String>,
+    ) -> Result<ScrapeInfo, ScrapeError> {
         let mut next_article = 0;
-        let num_articles = scraped_info.articles.len();
+        let num_articles = articles.len();
         let num_threads = self.settings.max_threads;
-        let wait_time = Duration::from_millis(1000 / self.settings.requests_per_second);
+        let wait_time = Duration::from_millis((1000.0 / self.settings.requests_per_second) as u64);
+
+        let mut users = HashSet::new();
 
         // Create the message passing situation
         let (main_tx, main_rx): (Sender<ThreadResponse>, Receiver<ThreadResponse>) =
@@ -207,100 +210,230 @@ impl Scraper {
             })
             .unzip();
 
-        // Create an unsafe reference here
-        let articles_arc = Arc::new(&scraped_info.articles);
+        // Create a shared reference here
+        // Terrible things will happen to it later
+        let articles_arc = Arc::new(&mut articles);
+        let tags_arc = Arc::new(&mut tags);
 
         // Create the threads
+        println!("Creating the threads...");
         thread::scope(|scope| {
-            thread_rxs.into_iter().enumerate().for_each(|(id, thread_rx)| {
-                let articles_copy = articles_arc.clone();
-                let main_tx = main_tx.clone();
-                scope.spawn(move || {
-                    // CONS not doing this with blocking since there is probably a better way asyncronously
-                    // but we all know how that went
-                    let client = blocking::Client::new();
-                    loop {
-                        // Tell main which thread needs an article
-                        main_tx
-                            .send(ThreadResponse::ArticleRequest(id))
-                            .expect("The reciever should never be deallocated.");
+            thread_rxs
+                .into_iter()
+                .enumerate()
+                .for_each(|(id, thread_rx)| {
+                    let articles_copy = articles_arc.clone();
+                    let tags_copy = tags_arc.clone();
+                    let main_tx = main_tx.clone();
+                    scope.spawn(move || {
+                        let client = blocking::Client::new();
+                        let page_id_pattern =
+                        Regex::new(r#"WIKIREQUEST.info.siteId = (/d+);"#).expect("hardcoded regex, shouldn't fail");
+                        let user_pattern = Regex::new(r#"userInfo\((\d+)\); return false;\\\"  ><img class=\\\"small\\\" src=\\\"https:\\\/\\\/www\.wikidot\.com\\\/avatar\.php\?userid=(?:\d+)&amp;amp;size=small&amp;amp;timestamp=(?:\d+)\\\" alt=\\\"(?:[^\\]+)\\\" style=\\\"background-image:url\(https:\\\/\\\/www\.wikidot\.com\\\/userkarma\.php\?u=(?:\d+)\)\\\"\\\/><\\\/a><a href=\\\"http:\\\/\\\/www\.wikidot\.com\\\/user:info\\\/([^\\]+)\\\" onclick=\\\"WIKIDOT\.page\.listeners\.userInfo\((?:\d+)\); return false;\\\" >([^<]+)<\\/a><\\/span>\\n        <span style=\\"color:#777\\">\\n(?: +)(.)"#).unwrap();
+                        loop {
+                            // Tell main which thread needs an article
+                            main_tx
+                                .send(ThreadResponse::ArticleRequest(id))
+                                .expect("The reciever should never be deallocated.");
 
-                        // Wait for a response
-                        let article_index = match thread_rx
-                            .recv()
-                            .expect("The Sender should never be disconnected.")
-                        {
-                            ThreadResponse::ArticleRequest(article_id) => article_id,
-                            ThreadResponse::EndRequest => {
-                                main_tx
-                                    .send(ThreadResponse::Alright)
-                                    .expect("The reciever should never be deallocated.");
-                                break;
-                            }
-                            // Main will only send the above responses
-                            _ => unreachable!(),
-                        };
+                            // Wait for a response
+                            let article_index = match thread_rx
+                                .recv()
+                                .expect("The Sender should never be disconnected.")
+                                {
+                                    ThreadResponse::ArticleRequest(article_id) => article_id,
+                                    ThreadResponse::EndRequest => {
+                                        main_tx
+                                            .send(ThreadResponse::Alright)
+                                            .expect("The reciever should never be deallocated.");
+                                        break;
+                                    }
+                                    // Main will only send the above responses
+                                    _ => unreachable!(),
+                                };
 
-                        // Gets a reference to the url string of the selected article
-                        let url: &String = unsafe {
-                            let unsafe_articles = articles_copy
+                            // Gets a reference to the selected article
+                            let mut article = articles_copy
                                 .get(article_index)
-                                .expect("This should never be OOB");
-                            let raw_article = unsafe_articles as *const Article;
-                            &(*raw_article).url
-                        };
+                                .expect("This should never be OOB.")
+                                .lock();
+                            let url = &article.url;
 
-                        // Make the article request
-                        // TODO add limited retry support
+                            // Make the article request
+                            // TODO add limited retry support
+                            // TODO error checking
+                            // println!("THREAD {}: {}", id, url);
+                            println!("url sent: {}", url);
+                            let document_text = client
+                                .get(String::from(WIKI_PREFIX) + url.as_str())
+                                .send()
+                                .unwrap()
+                                .text()
+                                .unwrap();
+                            println!("url_response: {}", url);
 
-                        println!("THREAD {}: URL TO SCRAPE: {:?}", id, url);
-                        // Parse the article
-                        // Update the article
-                        // Make the vote request
-                        // Update the article
-                    }
+                            // Get the required values
+                            let page_id_captures = page_id_pattern.captures(document_text.as_str()).unwrap();
+                            let page_id = page_id_captures.get(1).unwrap().as_str();
+                            let page_id: u64 = page_id.parse().unwrap();
+
+                            let document = Html::parse_document(document_text.as_str());
+                            let selector =
+                            Selector::parse(r#"div.page-tags a"#).expect("Hardcoded selector should not fail.");
+                            let tags: Vec<_> = document
+                                .select(&selector)
+                                .map(|a| {
+                                    let tag_string = a.inner_html();
+                                    tags_copy
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(_, tag)| **tag == tag_string)
+                                        .expect("All tags should be known by this point.")
+                                        .0
+                                        .try_into()
+                                        .expect("There should never be more tags than a u16.")
+                                })
+                                .collect();
+
+                            // Update the article
+                            article.tags = tags;
+                            article.page_id = page_id;
+
+                            // Make the vote request
+                            // TODO add error handling
+                            let mut headers = reqwest::header::HeaderMap::new();
+                            headers.insert(
+                                "Content-Type",
+                                "application/x-www-form-urlencoded; charset=UTF-8"
+                                    .parse()
+                                    .unwrap(),
+                            );
+                            headers.insert("user-agent", "SCP_SCRAPER/1.0".parse().unwrap());
+                            headers.insert(
+                                "Cookie",
+                                format!("wikidot_token7={}", API_TOKEN).parse().unwrap(),
+                            );
+
+                            let data = format!(
+                            "pageId={}&moduleName=pagerate%2FWhoRatedPageModule&wikidot_token7={}",
+                            page_id, API_TOKEN
+                        );
+
+                            let request = client
+                                .request(
+                                    reqwest::Method::POST,
+                                    "https://scp-wiki.wikidot.com/ajax-module-connector.php",
+                                )
+                                .headers(headers)
+                                .body(data)
+                                .send()
+                                .unwrap();
+
+                            let text = request.text().unwrap();
+
+                            // Update the article
+                            // TODO add error handling
+                            for reg_match in user_pattern.captures_iter(text.as_str()) {
+                                // Tell the main thread about this user
+                                // CONS remove if CPU bound and not mem bound
+                                let user_id = reg_match.get(1).unwrap().as_str().parse().unwrap();
+                                let url = String::from(reg_match.get(2).unwrap().as_str());
+                                let name = String::from(reg_match.get(3).unwrap().as_str());
+                                main_tx
+                                    .send(ThreadResponse::UserInfo(User {
+                                        user_id,
+                                        url,
+                                        name,
+                                    }))
+                                    .unwrap();
+
+                                let vote = match reg_match.get(4).unwrap().as_str() {
+                                    "+" => 1,
+                                    "-" => -1,
+                                    _ => unreachable!()
+                                };
+
+                                article.votes.push((vote, user_id));
+                            }
+                            println!("{:?}", article);
+                        }
+                    });
                 });
-            });
-
-            // TODO add error checking below this point
-            while next_article < num_articles {
-                // Wait for a perm request
-                let response = main_rx.recv().unwrap();
-                match response {
-                    ThreadResponse::VoteRequest(id) => thread_txs
-                        .get(id)
-                        .expect("ID should never be OOB.")
-                        .send(ThreadResponse::Alright)
-                        .unwrap(),
-                    ThreadResponse::ArticleRequest(id) => thread_txs
-                        .get(id)
-                        .expect("ID should never be OOB.")
-                        .send(ThreadResponse::ArticleRequest(next_article))
-                        .unwrap(),
-                    // Threads can only send the above requests
-                    _ => unreachable!(),
-                };
-
-                next_article += 1;
-
-                // Wait until the next web request can be sent according to settings
-                thread::sleep(wait_time);
-            }
-
-            // Ask threads to stop
-            for thread_tx in thread_txs.iter() {
-                thread_tx.send(ThreadResponse::EndRequest).unwrap();
-            }
-
-            // Wait for all to stop
-            let mut num_alive = num_threads;
-            while num_alive > 0 {
-                main_rx.recv().unwrap();
-                num_alive -= 1;
-            }
         });
 
+        // TODO add error checking below this point
+        println!("Actually scraping the pages...");
+        while next_article < num_articles {
+            // Wait for a perm request
+            let response = main_rx.recv().unwrap();
+            match response {
+                ThreadResponse::VoteRequest(id) => thread_txs
+                    .get(id)
+                    .expect("ID should never be OOB.")
+                    .send(ThreadResponse::Alright)
+                    .unwrap(),
+                ThreadResponse::ArticleRequest(id) => thread_txs
+                    .get(id)
+                    .expect("ID should never be OOB.")
+                    .send(ThreadResponse::ArticleRequest(next_article))
+                    .unwrap(),
+                // Threads can only send the above requests
+                ThreadResponse::UserInfo(user) => {
+                    users.insert(user);
+                }
+                _ => unreachable!(),
+            };
+
+            next_article += 1;
+
+            // Wait until the next web request can be sent according to settings
+            thread::sleep(wait_time);
+        }
+
+        // Ask threads to stop
+        for thread_tx in thread_txs.iter() {
+            thread_tx.send(ThreadResponse::EndRequest).unwrap();
+        }
+
+        // Wait for all to stop
+        let mut num_alive = num_threads;
+        while num_alive > 0 {
+            main_rx.recv().unwrap();
+            num_alive -= 1;
+        }
+
+        let scraped_info = ScrapeInfo {
+            articles: articles
+                .into_iter()
+                .map(|mutex| mutex.into_inner())
+                .collect(),
+            users,
+            tags,
+        };
+
         Ok(scraped_info)
+    }
+
+    /// Adds all tags on the wiki to the collection of tags.
+    /// This avoids having to build the taglist manually from the pages, which saves a lot of
+    /// complexity when multithreading
+    fn add_all_tags(&self) -> Result<Vec<String>, ScrapeError> {
+        let mut tag_collection = Vec::new();
+        let tag_url = "https://scp-wiki.wikidot.com/system:page-tags";
+        let client = blocking::Client::new();
+
+        let response = client.get(tag_url).send()?;
+        let document = Html::parse_document(response.text()?.as_str());
+        let page_item = Selector::parse(r#".tag"#).expect("Hardcoded selector shouldn't fail.");
+        let page_elements = document.select(&page_item);
+
+        for page in page_elements {
+            let element_html = page.inner_html();
+
+            tag_collection.push(element_html);
+        }
+
+        Ok(tag_collection)
     }
 
     /// Adds all pages on the wiki to the list of pages to scrape.
@@ -310,7 +443,7 @@ impl Scraper {
     /// # Return
     /// The articles in the returned vector are only the names and links to the articles
     /// and do not have id, vote, or tag information.
-    fn add_all_pages(&mut self) -> Result<Vec<Article>, ScrapeError> {
+    fn add_all_pages(&self) -> Result<Vec<Mutex<Article>>, ScrapeError> {
         let mut tag_url;
         let mut articles = Vec::new();
         let client = blocking::Client::new();
@@ -329,11 +462,10 @@ impl Scraper {
     /// This is blocking since this should be run before starting the real
     /// scraper and should have a very limited number of requests.
     fn extract_links_from_syspage(
-        &mut self,
+        &self,
         client: &blocking::Client,
         url: &String,
-    ) -> Result<Vec<Article>, ScrapeError> {
-        self.num_requests_sent += 1;
+    ) -> Result<Vec<Mutex<Article>>, ScrapeError> {
         let response = client.get(url).send()?;
         let document = Html::parse_document(response.text()?.as_str());
         let page_item = Selector::parse(r#"div[class="pages-list-item"]"#)
@@ -341,7 +473,7 @@ impl Scraper {
         let page_elements = document.select(&page_item);
 
         let name_pattern =
-            Regex::new(r#"<a href="(.+)">(.+)+</a>"#).expect("hardcoded regex, shouldn't fail");
+        Regex::new(r#"<a href="(.+)">(.+)+</a>"#).expect("hardcoded regex, shouldn't fail");
 
         let mut pages = Vec::new();
         for page in page_elements {
@@ -367,13 +499,13 @@ impl Scraper {
                 None => return Err(ScrapeError::RegexError),
             };
 
-            pages.push(Article {
+            pages.push(Mutex::new(Article {
                 name,
                 url,
                 page_id: 0,
                 tags: Vec::new(),
                 votes: Vec::new(),
-            });
+            }));
         }
 
         Ok(pages)
@@ -385,9 +517,9 @@ impl Scraper {
         let articles = self.add_all_pages()?;
 
         println!(
-            "Successfully came up with {} pages to scrape.",
-            articles.len()
-        );
+        "Successfully came up with {} pages to scrape.",
+        articles.len()
+    );
 
         Ok(())
     }
