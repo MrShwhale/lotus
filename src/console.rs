@@ -1,5 +1,6 @@
 use std::io;
-use crate::scraper;
+use crate::scraper::Scraper;
+use crate::recommender::Recommender;
 
 enum ConsoleResponse {
     FunctionSuccess,
@@ -12,7 +13,11 @@ pub fn main_console() {
     // CONS pass this to avoid making 2-3 strings for user input?
     let mut input = String::new();
 
-    let mut scp_scraper: scraper::Scraper = scraper::Scraper::new();
+    let mut scp_scraper: Scraper = Scraper::new();
+    // let mut recommender: Recommender = match Recommender::new() {
+    //     Ok(recommender) => recommender,
+    //     Err(e) => panic!("something went wrong with making the recommender")
+    // };
 
     loop {
         println!("LOTUS control panel");
@@ -26,7 +31,7 @@ pub fn main_console() {
 
         match input.as_str().trim_end() {
             "1" => web_scraper_console(&mut scp_scraper),
-            "2" => recommender_system_console(),
+            // "2" => recommender_system_console(&mut recommender),
             "3" => web_server_console(),
             "4" => about(),
             "5" => break,
@@ -38,7 +43,7 @@ pub fn main_console() {
 }
 
 /// Web scraper text console, where actions relating to the web scraper can be taken
-fn web_scraper_console(scp_scraper: &mut scraper::Scraper) {
+fn web_scraper_console(scp_scraper: &mut Scraper) {
     let mut input = String::new();
 
     loop {
@@ -84,8 +89,20 @@ fn web_scraper_console(scp_scraper: &mut scraper::Scraper) {
     }
 }
 
-fn recommender_system_console() {
+fn recommender_system_console(recommender: &mut Recommender) {
+    let mut input = String::new();
 
+    loop {
+        println!("Recommender control panel");
+        println!("1) Get top recommendations for user");
+        println!("2) Get users similar to a user");
+        println!("3) Regenerate model");
+        println!("4) Quit");
+
+        io::stdin().read_line(&mut input).expect("Invalid string input.");
+
+        input.clear();
+    }
 }
 
 fn web_server_console() {

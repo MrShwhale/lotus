@@ -1,5 +1,7 @@
-mod scraper;
 mod console;
+mod scraper;
+mod recommender;
+mod server;
 
 const VERSION: &str = "0.1.0";
 

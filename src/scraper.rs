@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    fs,
-    io::Error,
     sync::{
         mpsc::{self, Receiver, RecvError, SendError, Sender},
         Arc,
@@ -17,19 +15,16 @@ use std::{
     time::Duration,
 };
 
+mod scrape_writer;
+pub use scrape_writer::{ARTICLE_OUTPUT, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
+
 const TAG_PREFIX: &str = "https://scp-wiki.wikidot.com/system:page-tags/tag/";
-const TAG_TYPES: [&str; 4] = ["scp", "tale", "hub", "goi-format"];
-// const TAG_TYPES: [&str; 1] = ["hub"];
+// const TAG_TYPES: [&str; 4] = ["scp", "tale", "hub", "goi-format"];
+const TAG_TYPES: [&str; 1] = ["hub"];
 
 const WIKI_PREFIX: &str = "https://scp-wiki.wikidot.com/";
 
 const MAX_RETRIES: u8 = 5;
-
-const ARTICLE_OUTPUT: &str = "articles.csv";
-
-const TAGS_OUTPUT: &str = "tags.csv";
-
-const USERS_OUTPUT: &str = "users.csv";
 
 // api token found in https://github.com/scp-data/scp_crawler
 // It is not a real api token, just meant to placehold
@@ -92,8 +87,7 @@ impl Debug for ScrapeError {
             ScrapeError::WritingError => String::from("There was an error in writing to a file."),
             ScrapeError::MessagingError => {
                 String::from("There was an error in sending a message between threads.")
-            }
-            //ScrapeError::ThreadError => String::from("There was an error in one of the threads."),
+            } //ScrapeError::ThreadError => String::from("There was an error in one of the threads."),
         };
 
         write!(f, "{}", message)
@@ -102,7 +96,7 @@ impl Debug for ScrapeError {
 
 /// Holds basic information about an article on the wiki
 #[derive(Debug, Hash, Serialize, Deserialize)]
-pub struct Article {
+struct Article {
     /// The name of the article, user-facing
     name: String,
     /// The internal page id
@@ -117,7 +111,7 @@ pub struct Article {
 
 /// Holds basic information about a user on the wiki
 #[derive(Debug, Hash, Serialize, Deserialize)]
-pub struct User {
+struct User {
     /// The name of the user, user-facing
     name: String,
     /// The url suffix at which the user's page can be found
@@ -135,7 +129,7 @@ impl PartialEq for User {
 impl Eq for User {}
 
 /// Holds all information that is recorded during a scrape
-pub struct ScrapeInfo {
+struct ScrapeInfo {
     articles: Vec<Article>,
     users: HashMap<u64, User>,
     // CONS replacing with something faster
@@ -153,8 +147,6 @@ pub struct Scraper {
     max_concurrent_requests: u8,
     /// Delay between requests in milliseconds
     download_delay: u64,
-    /// The name of the output folder
-    output_dir: &'static str,
 }
 
 impl Scraper {
@@ -164,17 +156,18 @@ impl Scraper {
             // log_method: 3,
             max_concurrent_requests: 8,
             download_delay: 0,
-            output_dir: "./output",
         }
     }
 
     /// Scrapes the full SCP wiki and records the information in a format
     /// which the rest of this program can use.
-    /// TODO optimize. SOMETHING is making this very slow.
+    /// TODO optimize. SOMETHING is making this slow.
     pub fn scrape(&mut self) -> Result<(), ScrapeError> {
         // Get the list of articles to be scraped on the wiki
         println!("Getting all the list of pages...");
         let mut scrape_list = self.add_all_pages()?;
+
+        scrape_list.truncate(8);
 
         // Scrape the tags
         println!("Getting the list of tags...");
@@ -185,49 +178,7 @@ impl Scraper {
         let scraped_info = self.scrape_pages(scrape_list, tag_group)?;
 
         // Record the scraped info
-        self.record_info(scraped_info)?;
-
-        Ok(())
-    }
-
-    fn record_info(&self, scraped_info: ScrapeInfo) -> Result<(), Error> {
-        fs::create_dir_all(self.output_dir)?;
-        // Save the user information as a csv
-        println!("Writing users");
-        let mut writer = csv::WriterBuilder::new()
-            .has_headers(false)
-            .from_path(String::from(self.output_dir) + "/" + USERS_OUTPUT)?;
-        for (_, user) in scraped_info.users.iter() {
-            match writer.serialize(user) {
-                Ok(_) => continue,
-                Err(e) => println!("{:?}", e),
-            };
-        }
-
-        let mut writer = csv::WriterBuilder::new()
-            .has_headers(false)
-            .flexible(true)
-            .from_path(String::from(self.output_dir) + "/" + ARTICLE_OUTPUT)?;
-        // Save the article information as a csv
-        println!("Writing articles");
-        for article in scraped_info.articles.iter() {
-            match writer.serialize(article) {
-                Ok(_) => continue,
-                Err(e) => println!("{:?}", e),
-            };
-        }
-
-        let mut writer = csv::WriterBuilder::new()
-            .has_headers(false)
-            .from_path(String::from(self.output_dir) + "/" + TAGS_OUTPUT)?;
-        // Save the tag information as a csv
-        println!("Writing tags");
-        for tag in scraped_info.tags {
-            match writer.serialize(tag) {
-                Ok(_) => continue,
-                Err(e) => println!("{:?}", e),
-            };
-        }
+        scrape_writer::record_info(scraped_info)?;
 
         Ok(())
     }
@@ -290,8 +241,15 @@ impl Scraper {
 
             // Wait for all to stop
             while num_alive > 0 {
-                main_rx.recv().unwrap();
-                num_alive -= 1;
+                let thread_message = main_rx.recv().unwrap();
+                match thread_message {
+                    ThreadResponse::Alright | ThreadResponse::ArticleRequest(_) => num_alive -= 1,
+                    ThreadResponse::UserInfo(user) => {
+                        users.insert(user.user_id, user);
+                    }
+                    // Threads will only send the above 2 requests
+                    _ => unreachable!(),
+                }
             }
         });
 
@@ -471,15 +429,16 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             let url = String::from(WIKI_PREFIX) + article.url.as_str();
 
             // Make the article request
-            // TODO add limited retry support
             // TODO error checking
             // TODO consolidate naming
-            // println!("THREAD {}: {}", id, url);
             println!("url sent: {}", url);
 
             let document_text;
             let mut retries = 0;
 
+            // BUG you DO NOT know why this request (and the other one with a similar loop around
+            // it) sometimes send a 200 response which have EOF in the middle of chunks. Fixing
+            // this is very important, below is *NOT* a fix
             loop {
                 let response = retry_get_request(&client, &url).unwrap();
 
@@ -499,15 +458,6 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             }
 
             println!("url_response: {}", url);
-
-            // Get the required values
-            // let page_id_captures = match page_id_pattern.captures(document_text.as_str()) {
-            //     Some(other) => other,
-            //     None => {
-            //         println!("{}", r_text);
-            //         panic!("bruh");
-            //     }
-            // };
 
             let page_id_captures = page_id_pattern.captures(document_text.as_str()).unwrap();
 
@@ -579,6 +529,7 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             }
 
             // Update the article
+            // Send the user responses
             // TODO add error handling
             for reg_match in user_pattern.captures_iter(text.as_str()) {
                 // Tell the main thread about this user
@@ -631,10 +582,10 @@ fn run_messaging(
                 next_article += 1;
                 thread::sleep(wait_time);
             }
-            // Threads can only send the above requests
             ThreadResponse::UserInfo(user) => {
                 users.insert(user.user_id, user);
             }
+            // Threads can only send the above requests
             _ => unreachable!(),
         };
     }
