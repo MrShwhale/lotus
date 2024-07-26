@@ -1,7 +1,8 @@
 [package]
-name = "scp-recommender"
+name = "lotus"
 version = "0.1.0"
 edition = "2021"
+default-run = "lotus_web"
 
 [dependencies]
 arrow-array = "52.1.0"
@@ -12,9 +13,17 @@ http = "1.1.0"
 itertools = "0.13.0"
 parking_lot = "0.12.3"
 parquet = "52.1.0"
-polars = { version = "0.41.3", features = ["parquet", "dtype-u16", "dtype-i8", "algorithm_group_by"] }
+polars = { version = "0.41.3", features = ["parquet", "dtype-u16", "dtype-i8"] }
 polars-ops = "0.41.3"
 regex = "1.10.5"
 reqwest = { version = "0.12.5", features = ["blocking"] }
 scraper = "0.19.1"
 serde = { version = "1.0.204", features = ["derive"] }
+
+[[bin]]
+name = "lotus_scrape"
+path = "src/lotus_scrape.rs"
+
+[[bin]]
+name = "lotus_web"
+path = "src/lotus_web.rs"

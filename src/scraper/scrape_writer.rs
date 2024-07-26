@@ -1,9 +1,10 @@
+use super::{Article, ScrapeInfo, User};
+use crate::lotus_core::{ARTICLE_OUTPUT, OUTPUT_DIR, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
 use arrow_array::{
     builder::{ListBuilder, UInt16Builder},
     Int8Array, RecordBatch, StringArray, UInt16Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field, Schema};
-use const_format::formatcp;
 use parquet::arrow::ArrowWriter;
 use std::{
     collections::HashMap,
@@ -11,19 +12,6 @@ use std::{
     io::Error,
     sync::Arc,
 };
-
-use super::{Article, ScrapeInfo, User};
-
-// CONS make these fully compile time instead of building them each write
-pub const OUTPUT_DIR: &str = "./output";
-
-pub const ARTICLE_OUTPUT: &str = formatcp!("{}/articles.parquet", OUTPUT_DIR);
-
-pub const TAGS_OUTPUT: &str = formatcp!("{}/tags.parquet", OUTPUT_DIR);
-
-pub const USERS_OUTPUT: &str = formatcp!("{}/users.parquet", OUTPUT_DIR);
-
-pub const VOTES_OUTPUT: &str = formatcp!("{}/votes.parquet", OUTPUT_DIR);
 
 // TODO Error checking
 // TODO Extract common code
@@ -37,7 +25,7 @@ pub fn record_info(scraped_info: ScrapeInfo) -> Result<(), Error> {
     // Tags
     record_tags(scraped_info.tags).unwrap();
 
-    // TODO Votes & Articles
+    // Votes & Articles
     record_articles_votes(scraped_info.articles).unwrap();
 
     Ok(())
@@ -171,12 +159,16 @@ fn record_articles(
     pids: Vec<u64>,
     tag_lists: Vec<Vec<u16>>,
 ) -> Result<(), Error> {
-    let tag_field = Field::new("tags", DataType::List(Arc::new(Field::new("item", DataType::UInt16, false))), false);
+    let tag_field = Field::new(
+        "tags",
+        DataType::List(Arc::new(Field::new("item", DataType::UInt16, false))),
+        false,
+    );
     let schema = Arc::new(Schema::new(vec![
         Field::new("name", DataType::Utf8, false),
         Field::new("url", DataType::Utf8, false),
         Field::new("pid", DataType::UInt64, false),
-        tag_field
+        tag_field,
     ]));
 
     let mut builder = ListBuilder::new(UInt16Builder::new());

@@ -1,132 +1,32 @@
+mod scrape_writer;
+mod scraper_types;
+
+use crate::lotus_core::{Article, User};
+use const_format::formatcp;
 use http::HeaderMap;
 use parking_lot::Mutex;
 use regex::Regex;
 use reqwest::blocking::{self, Client, Response};
 use scraper::{Html, Selector};
-use serde::{Deserialize, Serialize};
+use scraper_types::*;
 use std::{
     collections::HashMap,
-    fmt::{Debug, Display},
     sync::{
-        mpsc::{self, Receiver, RecvError, SendError, Sender},
+        mpsc::{self, Receiver, Sender},
         Arc,
     },
     thread::{self, Scope},
     time::Duration,
 };
 
-mod scrape_writer;
-pub use scrape_writer::{ARTICLE_OUTPUT, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
-
-const TAG_PREFIX: &str = "https://scp-wiki.wikidot.com/system:page-tags/tag/";
-// const TAG_TYPES: [&str; 4] = ["scp", "tale", "hub", "goi-format"];
-const TAG_TYPES: [&str; 1] = ["hub"];
-
 const WIKI_PREFIX: &str = "https://scp-wiki.wikidot.com/";
+const TAG_PREFIX: &str = formatcp!("{}system:page-tags/tag/", WIKI_PREFIX);
 
-const MAX_RETRIES: u8 = 5;
+const MAX_RETRIES: u8 = 7;
 
 // api token found in https://github.com/scp-data/scp_crawler
 // It is not a real api token, just meant to placehold
 const API_TOKEN: &str = "123456";
-
-type ID = u64;
-
-enum ThreadResponse {
-    ArticleRequest(usize),
-    EndRequest,
-    Alright,
-    UserInfo(User),
-}
-
-/// Holds information about the errors which can happen while web scraping
-/// CONS make this more robust and specific with context-based information
-pub enum ScrapeError {
-    RegexError,
-    WebError(reqwest::Error),
-    WritingError,
-    MessagingError,
-    // ThreadError,
-}
-
-impl From<reqwest::Error> for ScrapeError {
-    fn from(err: reqwest::Error) -> Self {
-        ScrapeError::WebError(err)
-    }
-}
-
-impl From<std::io::Error> for ScrapeError {
-    fn from(_: std::io::Error) -> Self {
-        ScrapeError::WritingError
-    }
-}
-
-impl From<RecvError> for ScrapeError {
-    fn from(_: RecvError) -> Self {
-        ScrapeError::MessagingError
-    }
-}
-
-impl From<SendError<ThreadResponse>> for ScrapeError {
-    fn from(_: SendError<ThreadResponse>) -> Self {
-        ScrapeError::MessagingError
-    }
-}
-
-impl Display for ScrapeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#?}", self)
-    }
-}
-
-impl Debug for ScrapeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let message = match self {
-            ScrapeError::RegexError => String::from("There was an error in the regex."),
-            ScrapeError::WebError(err) => format!("{:?}", err),
-            ScrapeError::WritingError => String::from("There was an error in writing to a file."),
-            ScrapeError::MessagingError => {
-                String::from("There was an error in sending a message between threads.")
-            } //ScrapeError::ThreadError => String::from("There was an error in one of the threads."),
-        };
-
-        write!(f, "{}", message)
-    }
-}
-
-/// Holds basic information about an article on the wiki
-#[derive(Debug, Hash, Serialize, Deserialize)]
-struct Article {
-    /// The name of the article, user-facing
-    name: String,
-    /// The internal page id
-    page_id: u64,
-    /// The indices of this article's tags in the taglist
-    tags: Vec<u16>,
-    /// The url suffix at which the page can be found
-    url: String,
-    /// The vote results and the userids of those who gave them
-    votes: Vec<(i8, ID)>,
-}
-
-/// Holds basic information about a user on the wiki
-#[derive(Debug, Hash, Serialize, Deserialize)]
-struct User {
-    /// The name of the user, user-facing
-    name: String,
-    /// The url suffix at which the user's page can be found
-    url: String,
-    /// The internal user id
-    user_id: ID,
-}
-
-impl PartialEq for User {
-    fn eq(&self, other: &Self) -> bool {
-        self.user_id == other.user_id
-    }
-}
-
-impl Eq for User {}
 
 /// Holds all information that is recorded during a scrape
 struct ScrapeInfo {
@@ -162,12 +62,12 @@ impl Scraper {
     /// Scrapes the full SCP wiki and records the information in a format
     /// which the rest of this program can use.
     /// TODO optimize. SOMETHING is making this slow.
-    pub fn scrape(&mut self) -> Result<(), ScrapeError> {
+    pub fn scrape(self, article_limit: usize, tag_pages: Vec<&str>) -> Result<(), ScrapeError> {
         // Get the list of articles to be scraped on the wiki
         println!("Getting all the list of pages...");
-        let mut scrape_list = self.add_all_pages()?;
+        let mut scrape_list = self.add_all_pages(tag_pages)?;
 
-        scrape_list.truncate(8);
+        scrape_list.truncate(article_limit);
 
         // Scrape the tags
         println!("Getting the list of tags...");
@@ -296,11 +196,11 @@ impl Scraper {
     /// # Return
     /// The articles in the returned vector are only the names and links to the articles
     /// and do not have id, vote, or tag information.
-    fn add_all_pages(&self) -> Result<Vec<Mutex<Article>>, ScrapeError> {
+    fn add_all_pages(&self, tag_types: Vec<&str>) -> Result<Vec<Mutex<Article>>, ScrapeError> {
         let mut tag_url;
         let mut articles = Vec::new();
         let client = blocking::Client::new();
-        for tag in TAG_TYPES.iter() {
+        for tag in tag_types.iter() {
             tag_url = String::from(TAG_PREFIX);
             tag_url.push_str(tag);
             let mut pages = self.extract_links_from_syspage(&client, &tag_url)?;
@@ -364,23 +264,6 @@ impl Scraper {
         }
 
         Ok(pages)
-    }
-
-    /// Checks how many pages would have to be scraped in a real scrape.
-    /// Still sends as many requests as there are major tag types.
-    pub fn dry_scrape(&mut self) -> Result<(), ScrapeError> {
-        let articles = self.add_all_pages()?;
-
-        println!(
-            "Successfully came up with {} pages to scrape.",
-            articles.len()
-        );
-
-        Ok(())
-    }
-
-    pub fn schedule_scrape(&mut self) -> Result<(), ScrapeError> {
-        Ok(())
     }
 }
 
@@ -635,4 +518,24 @@ fn retry_request(
     }
 
     Ok(request)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::panic;
+
+    #[test]
+    fn scrape() {
+        let scraper = Scraper::new();
+
+        match scraper.scrape(8, vec!["hub"]) {
+            Ok(_) => (),
+            Err(e) => {
+                println!("Something went wrong! Specifically, this:");
+                println!("{:?}", e);
+                panic!();
+            }
+        }
+    }
 }
