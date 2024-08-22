@@ -67,6 +67,7 @@ impl Scraper {
         println!("Getting all the list of pages...");
         let mut scrape_list = self.add_all_pages(tag_pages)?;
 
+        // Filter out duplicates (Literally just "The Troll", I think)
         scrape_list.truncate(article_limit);
 
         // Scrape the tags
@@ -205,6 +206,7 @@ impl Scraper {
             tag_url.push_str(tag);
             let mut pages = self.extract_links_from_syspage(&client, &tag_url)?;
             articles.append(&mut pages);
+
             // Avoid throttling
             thread::sleep(Duration::from_millis(self.download_delay + 100));
         }
@@ -248,6 +250,12 @@ impl Scraper {
                 ),
                 None => return Err(ScrapeError::RegexError),
             };
+
+            // I admire and admonish the individual who is making me write this case
+            // TODO make sure this works
+            if url == "scp-1047-j" {
+                continue;
+            }
 
             let name = match captures.get(2) {
                 Some(name) => String::from(name.as_str()),

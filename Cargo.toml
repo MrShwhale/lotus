@@ -13,8 +13,9 @@ http = "1.1.0"
 itertools = "0.13.0"
 parking_lot = "0.12.3"
 parquet = "52.1.0"
-polars = { version = "0.41.3", features = ["parquet", "dtype-u16", "dtype-i8"] }
-polars-ops = "0.41.3"
+polars = { version = "0.41.3", features = ["parquet", "dtype-u16", "dtype-i8", "ndarray"] }
+polars-lazy = { version = "0.41.3", features = ["parquet", "pivot", "dtype-u16", "dtype-i8", "dtype-struct", "is_in"] }
+polars-core = { version = "0.41.3", features = ["dot_product"] }
 regex = "1.10.5"
 reqwest = { version = "0.12.5", features = ["blocking"] }
 scraper = "0.19.1"
