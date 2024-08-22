@@ -1,5 +1,14 @@
-/target
+# Normal Rust things
+debug/
+target/
+
+Cargo.lock
+
+**/*.rs.bk
+
+*.pdb
+
+# Project specific
 /output
 /output_backup
 output_backup.zip
-/src/output
