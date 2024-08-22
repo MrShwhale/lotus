@@ -1,12 +1,13 @@
 use super::lotus_core::{ARTICLE_OUTPUT, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
-use core::panic;
 use pivot;
 use polars::prelude::*;
 use polars_core::utils::Container;
 use polars_lazy::{dsl::col, prelude::*};
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::File};
 
-// Might be too high?
+/// Number of similar users to consider when recommending an article
+/// Setting this higher gives a wider variety of opinions, but makes
+/// suggestions more susceptible to popularity bias
 const SIMILAR_TO_USE: u32 = 30;
 
 #[derive(Debug)]
@@ -29,11 +30,12 @@ pub struct Recommender {
 }
 
 // TODO this WHOLE FILE needs error handling
-// TODO use the concurrent versions of everything
+// OPT use the concurrent versions of everything, and make sure that actually has benefits
 impl Recommender {
     /// Creates a new recommender.
     /// Assumes the default web scraper names/locations of files
     pub fn new(min_votes: u16) -> Result<Recommender, RecommenderError> {
+        // CONS adding the ability to run with fewer users/pages for testing purposes
         let user_frame = set_up_user_frame(USERS_OUTPUT)?;
         let page_frame = set_up_page_frame(ARTICLE_OUTPUT)?;
         let rating_frame = set_up_rating_frame(VOTES_OUTPUT)?;
@@ -51,9 +53,7 @@ impl Recommender {
             .group_by(["uid"])
             .agg([col("rating").count().alias("rating_count")])
             .filter(col("rating_count").gt_eq(lit(min_votes)))
-            .collect_concurrently()
-            .unwrap()
-            .fetch_blocking()
+            .collect()
             .unwrap();
 
         // Cut out all ratings by who have fewer than min_votes votes
@@ -102,20 +102,19 @@ impl Recommender {
         Ok(recommender)
     }
 
-    // BUG uid is a float by the end of this, could happen before
-    // Also, WOW this is slow
+    // OPT Also, WOW this is slow
     fn normalize_rating_frame(&mut self) {
         // SCP users have this nasty habit of being positive people.
         // This means that they mostly only upvote, which causes issues since then the average for many rows is 0
         // This could be a critical issue but if you knew what you were doing you wouldn't be here at all
         // So, change the average rating to be the mean but with a single 0 rating added
-        // Then, properly normalize it
+        // Then, properly normalize it (magnitude of 1)
 
         let mut frame = self.rating_frame.clone().collect().unwrap();
         let mut z_vec = Vec::with_capacity(frame.width());
         z_vec.push(Series::new("pid", [0u64].as_ref()));
-        for whale in frame.get_column_names().iter().skip(1) {
-            z_vec.push(Series::new(whale, [0f32].as_ref()))
+        for name in frame.get_column_names().iter().skip(1) {
+            z_vec.push(Series::new(name, [0f32].as_ref()))
         }
 
         let z_frame = DataFrame::new(z_vec).unwrap();
@@ -133,13 +132,13 @@ impl Recommender {
 
         let first = frame.get(0).unwrap();
 
-        for (i, whale) in frame.get_column_names().iter().skip(1).enumerate() {
+        for (i, name) in frame.get_column_names().iter().skip(1).enumerate() {
             let value = match first[i + 1] {
                 AnyValue::Float64(val) => val,
-                _ => panic!("Bruch"),
+                _ => unreachable!(),
             };
 
-            self.middle_norms.insert(String::from(*whale), value);
+            self.middle_norms.insert(String::from(*name), value);
         }
 
         let frame = frame.slice(0, frame.len() - 1);
@@ -172,6 +171,7 @@ impl Recommender {
         &self,
         uid: u64,
         banned_tags: Vec<String>,
+        required_tags: Vec<String>,
         external_bans: Vec<u64>,
     ) -> LazyFrame {
         let user_similarity = self.get_user_similarity(uid);
@@ -200,10 +200,6 @@ impl Recommender {
             .collect();
 
         let similar_users = self.rating_frame.clone().select(similar_cols);
-
-        // similar_users has the 10 uids of the most similar users
-        // Against their ratings for every page
-        // Multiply each column by the user similarity for that column
         let similar_users = similar_users.collect().unwrap();
 
         let similar_uids = user_similarity.column("uid").unwrap();
@@ -219,12 +215,12 @@ impl Recommender {
         for i in 0..similar_uids.len() {
             let string = match similar_uids.get(i).unwrap() {
                 AnyValue::String(val) => val,
-                _ => panic!("bruh :("),
+                _ => unreachable!(),
             };
 
             let weight = match similar_weights.get(i).unwrap() {
                 AnyValue::Float64(val) => val,
-                _ => panic!("bruh 2 :("),
+                _ => unreachable!(),
             };
 
             similarity_map.insert(string, weight);
@@ -247,18 +243,10 @@ impl Recommender {
             .unwrap();
         page_weights.rename("weights");
 
-        // TODO fix this bro :(
-        let pids = self
-            .rating_frame
-            .clone()
-            .collect()
-            .unwrap()
-            .column("pid")
-            .unwrap()
-            .clone();
-
         // Create series made of all read pages
-        let uid_col = col(format!("{}", uid).as_str());
+        let uid_str = format!("{}", uid);
+        let uid_col = col(uid_str.as_str());
+        // This does not need to be very small since the difference should be quite large
         let f_uncert = lit(1e-3f64);
         let uid_unvote = lit(self
             .middle_norms
@@ -266,7 +254,6 @@ impl Recommender {
             .unwrap()
             .to_owned());
 
-        // BUG this is not working: things I have upvoted (and maybe downvoted) are showing up
         // Filter column
         let ignored_pages = uid_col
             .clone()
@@ -276,32 +263,24 @@ impl Recommender {
             .or(uid_col.clone().lt(uid_unvote.clone() - f_uncert.clone()))
             // TODO Check for the banned tags
             // .or()
+            // TODO Check for the required tags
+            // .or()
             // Check if this has been externally banned
-            .or(col("pid").is_in(lit(Series::from_vec("ext_bans", external_bans))))
-            .alias("usable");
+            .or(col("pid").is_in(lit(Series::from_vec("ext_bans", external_bans))));
 
-        // This is sketchy, should likely be filter not select
-        let read_pages = self
+        let mut recommendations = self
             .rating_frame
             .clone()
-            .select([ignored_pages])
+            .select([col("pid"), uid_col.clone()])
             .collect()
             .unwrap();
 
-        let read_pages = read_pages.column("usable").unwrap().clone();
+        recommendations.insert_column(2, page_weights).unwrap();
 
-        // Combine with pid info again
-        let page_weights = DataFrame::new(vec![read_pages, pids, page_weights])
-            .unwrap()
-            .lazy();
+        let recommendations = recommendations.lazy().filter(ignored_pages.not());
 
-        // Drop all read pages
-        let page_weights = page_weights
-            .filter(col("usable"))
-            .select([col("pid"), col("weights")]);
-
-        // Sort by score
-        page_weights.sort(
+        // Sort by similarity score
+        recommendations.sort(
             ["weights"],
             SortMultipleOptions::new().with_order_descending(true),
         )
@@ -329,8 +308,8 @@ impl Recommender {
 }
 
 fn set_up_user_frame(user_file: &str) -> Result<DataFrame, RecommenderError> {
-    let file = std::fs::File::open(user_file).unwrap();
-    let user_df = ParquetReader::new(file).finish().unwrap();
+    let file = File::open(user_file).unwrap();
+    let user_df = ParquetReader::new(file).finish()?;
 
     Ok(user_df)
 }
@@ -359,8 +338,8 @@ fn set_up_rating_frame(rating_file: &str) -> Result<LazyFrame, RecommenderError>
 }
 
 fn set_up_tags_frame(tags_file: &str) -> Result<DataFrame, RecommenderError> {
-    let file = std::fs::File::open(tags_file).unwrap();
-    let tags_df = ParquetReader::new(file).finish().unwrap();
+    let file = File::open(tags_file).unwrap();
+    let tags_df = ParquetReader::new(file).finish()?;
 
     Ok(tags_df)
 }
