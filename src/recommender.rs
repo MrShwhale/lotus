@@ -1,10 +1,10 @@
 mod recommender_types;
 
-use recommender_types::*;
 use pivot;
 use polars::prelude::*;
 use polars_core::utils::Container;
 use polars_lazy::{dsl::col, prelude::*};
+use recommender_types::*;
 use std::{collections::HashMap, fs::File};
 
 pub struct Recommender {
@@ -25,17 +25,18 @@ impl Recommender {
         Self::new_with_options(&DEFAULT_REC_OPTIONS)
     }
 
+    /// Creates a new recommender with the provided settings
     pub fn new_with_options(options: &RecommenderOptions) -> Result<Recommender, RecommenderError> {
         // CONS adding the ability to run with fewer users/pages for testing purposes
         let user_frame = set_up_user_frame(options.users_file)?;
         let page_frame = set_up_page_frame(options.articles_file)?;
         let rating_frame = set_up_rating_frame(options.votes_file)?;
 
-        // BUG some weird f32/f64 stuff is going on in this file
+        // CONS
         // Try to make it just f64, ideally option to make f32
         // Cast the i8 values (used for minimizing save) into the usable f64
         let mut casts = PlHashMap::new();
-        casts.insert("rating", DataType::Float32);
+        casts.insert("rating", DataType::Float64);
         let rating_frame = rating_frame.cast(casts, true);
         eprintln!("Frames made");
 
@@ -60,6 +61,7 @@ impl Recommender {
         let mut casts = PlHashMap::new();
         casts.insert("pid", DataType::UInt64);
 
+        // Consider filtering before this
         let rating_frame = pivot::pivot_stable(
             &rating_frame.collect()?,
             ["uid"],
@@ -71,7 +73,7 @@ impl Recommender {
         )?
         .lazy()
         .fill_null(0f64)
-        .cast(casts, true);
+        .cast(casts, false);
 
         eprintln!("Pivoted");
 
@@ -94,7 +96,9 @@ impl Recommender {
         Ok(recommender)
     }
 
-    // OPT Also, WOW this is slow
+    // OPT WOW this is slow
+    // CONS adding second way to do this which is fast and makes it so that everyone's vote is
+    // worth the same no matter previous voting record
     fn normalize_rating_frame(&mut self) -> Result<(), RecommenderError> {
         // SCP users have this nasty habit of being positive people.
         // This means that they mostly only upvote, which causes issues since then the average for many rows is 0
@@ -106,7 +110,7 @@ impl Recommender {
         let mut z_vec = Vec::with_capacity(frame.width());
         z_vec.push(Series::new("pid", [0u64].as_ref()));
         for name in frame.get_column_names().iter().skip(1) {
-            z_vec.push(Series::new(name, [0f32].as_ref()))
+            z_vec.push(Series::new(name, [0f64].as_ref()))
         }
 
         let z_frame = DataFrame::new(z_vec)?;
@@ -115,8 +119,11 @@ impl Recommender {
         let all_but_pid = col("*").exclude(["pid"]);
         let centered_adjusted =
             all_but_pid.clone() - (all_but_pid.clone().sum() / all_but_pid.clone().len());
-        let normalized = centered_adjusted.clone() / centered_adjusted.clone().pow(2).sum().sqrt();
-        frame = frame.lazy().select([col("pid"), normalized]).collect()?;
+        let l_frame = frame.lazy().select([col("pid"), centered_adjusted]);
+
+        // Normalization must occur for cosine similarity to be done easily
+        let normalized = all_but_pid.clone() / all_but_pid.clone().pow(2).sum().sqrt();
+        let frame = l_frame.select([col("pid"), normalized]).collect()?;
 
         let first = match frame.get(0) {
             Some(row) => row,
@@ -180,7 +187,10 @@ impl Recommender {
         let user_similarity = user_similarity.filter(col("similarity").lt(lit(0.999f64)));
 
         // Get the most similar non-exact-copy users
-        let user_similarity = user_similarity.clone().limit(self.users_to_consider).collect()?;
+        let user_similarity = user_similarity
+            .clone()
+            .limit(self.users_to_consider)
+            .collect()?;
 
         // Get the list of pages which the most similar users have read
         let similar_cols: Vec<_> = user_similarity["uid"]
@@ -344,4 +354,34 @@ fn set_up_tags_frame(tags_file: &str) -> Result<DataFrame, RecommenderError> {
     let tags_df = ParquetReader::new(file).finish()?;
 
     Ok(tags_df)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_recommendation() {
+        let mut options = DEFAULT_REC_OPTIONS.clone();
+        // Limits the number of users
+        options.min_votes = 100;
+        let rec = Recommender::new_with_options(&options).expect("Recommender not created");
+
+        let rating_frame = set_up_rating_frame(options.votes_file)
+            .expect("Ratings not read")
+            .collect()
+            .expect("Ratings collected");
+        println!("{:?}", rating_frame);
+        let column = match rating_frame.get(0).expect("Row found")[1] {
+            AnyValue::UInt64(value) => value,
+            _ => unreachable!(),
+        };
+
+        println!("{:?}", column);
+
+        rec.get_recommendations_by_uid(column, Vec::new(), Vec::new(), Vec::new())
+            .expect("Recommendation not made")
+            .collect()
+            .expect("Not collected");
+    }
 }

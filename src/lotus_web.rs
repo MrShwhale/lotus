@@ -18,7 +18,7 @@ fn main() {
 
     println!("Getting rec");
     let recs =
-        match recommender.get_recommendations_by_uid(7904845, Vec::new(), Vec::new(), Vec::new()) {
+        match recommender.get_recommendations_by_uid(6479803, Vec::new(), Vec::new(), Vec::new()) {
             Ok(lf) => lf.collect(),
             Err(e) => {
                 eprintln!("{:?}", e);

@@ -34,6 +34,7 @@ impl From<io::Error> for RecommenderError {
 
 // CONS choose between multiple floating point types?
 // CONS nonstatic lifetime
+#[derive(Clone)]
 pub struct RecommenderOptions {
     /// Location of the parquet file that contains article information
     pub articles_file: &'static str,
