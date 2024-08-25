@@ -9,19 +9,245 @@
 </head>
 
 <body>
+    <style>
+        html {
+            background-color: #FAFAFA;
+        }
+
+        .header {
+            margin: auto;
+        }
+
+        .title {
+            text-align: center;
+            font-size: 72px;
+            font-family: "gallant12x22";
+        }
+
+        /* This styling to center it is the worst, do NOT ship with this still in it!*/
+        .input-box {
+            border-width: 3px;
+            border-color: #D3D3D3;
+            border-radius: 8px;
+            font-size: 30px;
+            box-sizing: border-box;
+            height: 45px;
+            position: relative;
+            top: -7px;
+        }
+
+        /* This styling to center it is the worst, do NOT ship with this still in it*/
+        .search-button {
+            margin: auto;
+            height: 45px;
+            width: 45px;
+            background-image: url("./assets/Magnifying_glass_icon.svg");
+            background-size: 100%;
+            position: relative;
+            top: 2.5px;
+        }
+
+        .search {
+            margin: auto;
+            width: 50%;
+            height: 50px;
+        }
+
+        .rec-container {
+            margin: auto;
+            height: auto;
+            width: 80%;
+            border: 1px solid black;
+        }
+
+        .rec {
+            border: 1px solid black;
+            font-size: 36px;
+            margin: 5px 5px;
+            padding-left: 30px;
+        }
+    </style>
     <div class="header">
         <h1 class="title">LOTUS</h1>
     </div>
 
     <div class="rec-container">
         <div class="search">
-            <form method="get">
-                <input class="input-box" id="user-search" type="text" placeholder="Enter a username..." name="username"
-                    value="" autocomplete="off">
-                <button class="search-button" id="user-search-button">
-            </form>
+            <input class="input-box" id="user-search" type="text" placeholder="Enter a username..." name="username"
+                value="" autocomplete="off">
+            <button class="search-button" id="user-search-button">
+        </div>
+        <div id="recommendations">
         </div>
     </div>
+
+    <script>
+        let wikiPrefix = "https://scp-wiki.wikidot.com/";
+        // Retrieves and displays recommendations for the given user with the given settings
+        async function showRecs() {
+            console.log("Starting to request...");
+
+            let username = document.getElementById("user-search").value;
+            let url = window.location.href + "rec?user=" + encodeURIComponent(username);
+
+            console.log(url);
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`Response status: ${response.status}`);
+                }
+
+                const json = await response.json();
+                // DEBUG
+                // const json = [
+                //     {
+                //         "url": "integrity-project",
+                //         "name": "Integrity Project"
+                //     },
+                //     {
+                //         "url": "maria-jones-this-is-your-life",
+                //         "name": "Like We Were Ever Kindergarten Teachers to Start With"
+                //     },
+                //     {
+                //         "url": "but-some-time-we-cant-erase",
+                //         "name": "All This Wandering"
+                //     },
+                //     {
+                //         "name": "I Was Not Magnificent",
+                //         "url": "i-was-not-magnificent"
+                //     },
+                //     {
+                //         "name": "SCP-173",
+                //         "url": "scp-173"
+                //     },
+                //     {
+                //         "name": "Where Your Eyes Don't Go",
+                //         "url": "where-your-eyes-don-t-go"
+                //     },
+                //     {
+                //         "url": "the-cool-war-hub",
+                //         "name": "The Cool War"
+                //     },
+                //     {
+                //         "name": "wowwee go kill ursefl",
+                //         "url": "wowwee-go-kill-ursefl"
+                //     },
+                //     {
+                //         "url": "scp-6001",
+                //         "name": "SCP-6001"
+                //     },
+                //     {
+                //         "url": "scp-082",
+                //         "name": "SCP-082"
+                //     },
+                //     {
+                //         "name": "The Cool Kids",
+                //         "url": "the-cool-kids"
+                //     },
+                //     {
+                //         "url": "friendly-conversation",
+                //         "name": "Friendly Conversation"
+                //     },
+                //     {
+                //         "name": "Kill the Feeling",
+                //         "url": "kill-the-feeling"
+                //     },
+                //     {
+                //         "url": "moonlighting",
+                //         "name": "Moonlighting"
+                //     },
+                //     {
+                //         "name": "The Department of Humanoid Risk Assessment",
+                //         "url": "humanoid-risk-assessment"
+                //     },
+                //     {
+                //         "url": "clef-and-dimitri-hit-the-road",
+                //         "name": "Clef And Dimitri Hit The Road"
+                //     },
+                //     {
+                //         "url": "routine-psychological-evaluations-by-dr-glass",
+                //         "name": "Routine Psychological Evaluations By Dr Glass"
+                //     },
+                //     {
+                //         "name": "SCP-1000",
+                //         "url": "scp-1000"
+                //     },
+                //     {
+                //         "name": "Onboarding",
+                //         "url": "onboarding"
+                //     },
+                //     {
+                //         "url": "penal-reform",
+                //         "name": "Penal Reform"
+                //     },
+                //     {
+                //         "name": "SCP-085",
+                //         "url": "scp-085"
+                //     },
+                //     {
+                //         "name": "Personal Log of Agent AA",
+                //         "url": "log-of-agent-aa"
+                //     },
+                //     {
+                //         "name": "Ouroboros",
+                //         "url": "ouroboros"
+                //     },
+                //     {
+                //         "name": "SCP-2343",
+                //         "url": "scp-2343"
+                //     },
+                //     {
+                //         "name": "Voices Carry: Part 1",
+                //         "url": "voices-carry-part-1"
+                //     },
+                //     {
+                //         "url": "we-need-to-talk-about-fifty-five",
+                //         "name": "We Need To Talk About Fifty-Five"
+                //     },
+                //     {
+                //         "name": "Mobile Task Force Basic School: Induction Remarks",
+                //         "url": "sunday-0600-mobile-task-force-central-training-facility"
+                //     },
+                //     {
+                //         "url": "black-white-black-white-black-white-black-white-black-white",
+                //         "name": "black white black white black white black white black white gray"
+                //     },
+                //     {
+                //         "name": "SCP-4818",
+                //         "url": "scp-4818"
+                //     },
+                //     {
+                //         "name": "Excerpts From \"How To Survive When Reality Doesn't\", by Alto Clef",
+                //         "url": "clef-excerpts"
+                //     }
+                // ]
+                console.log(json);
+
+                // Create
+                let recommendationsHolder = document.getElementById("recommendations");
+                for (const page of json) {
+                    console.log(page);
+                    const recText = document.createElement("p");
+                    const recElement = document.createElement("a");
+                    recText.innerHTML = `${page.name}`;
+
+                    recElement.setAttribute("href", wikiPrefix + page.url);
+                    recElement.classList.add("rec");
+
+                    recElement.appendChild(recText);
+
+                    recommendationsHolder.appendChild(recElement);
+                }
+            } catch (error) {
+                console.error(error.message);
+            }
+
+            console.log("Done!");
+        }
+
+        document.getElementById("user-search-button").addEventListener('click', showRecs); 
+    </script>
 </body>
 
 </html>

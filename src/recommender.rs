@@ -16,6 +16,8 @@ pub struct Recommender {
     users_to_consider: u32,
 }
 
+static RECOMENDER_HEADING: &str = "[RECOMMENDER] ";
+
 // TODO this WHOLE FILE needs error handling
 // OPT use the concurrent versions of everything, and make sure that actually has benefits
 impl Recommender {
@@ -38,7 +40,7 @@ impl Recommender {
         let mut casts = PlHashMap::new();
         casts.insert("rating", DataType::Float64);
         let rating_frame = rating_frame.cast(casts, true);
-        eprintln!("Frames made");
+        eprintln!("{}Frames made", RECOMENDER_HEADING);
 
         // TODO this could probably be optimized
         // Count votes from each user
@@ -52,7 +54,7 @@ impl Recommender {
         // Cut out all ratings by who have fewer than min_votes votes
         let rating_frame =
             rating_frame.filter(col("uid").is_in(lit(selected_users["uid"].clone())));
-        eprintln!("Irrelevant users discarded.");
+        eprintln!("{}Irrelevant users discarded", RECOMENDER_HEADING);
 
         // Rating frame has the columns as the users (since that is what operations are done by)
         // and the rows as the pages. The intersections of them is the rating that user gave that
@@ -75,7 +77,7 @@ impl Recommender {
         .fill_null(0f64)
         .cast(casts, false);
 
-        eprintln!("Pivoted");
+        eprintln!("{}Pivoted", RECOMENDER_HEADING);
 
         let tags_frame = set_up_tags_frame(options.tags_file)?;
 
@@ -91,7 +93,7 @@ impl Recommender {
 
         // Normalize data
         recommender.normalize_rating_frame()?;
-        eprintln!("Normalized");
+        eprintln!("{}Normalized", RECOMENDER_HEADING);
 
         Ok(recommender)
     }
@@ -144,6 +146,32 @@ impl Recommender {
         self.rating_frame = frame.lazy();
 
         Ok(())
+    }
+
+    // Returns the Series representing the given user using the page dataframe
+    pub fn get_user_by_username(&self, username: &str) -> Result<Vec<AnyValue>, RecommenderError> {
+        eprintln!("{}Searching for user: {}", RECOMENDER_HEADING, username);
+        // CONS this might be the worst?
+        let names = self.user_frame.column("name")?;
+        let mut index = 0;
+        loop {
+            let extracted = match names.get(index)? {
+                AnyValue::String(value) => value,
+                _ => unreachable!(),
+            };
+
+            if extracted == username {
+                eprintln!("{}User found at position {}", RECOMENDER_HEADING, index);
+                break;
+            }
+
+            index += 1;
+        }
+
+        match self.user_frame.get(index) {
+            Some(value) => Ok(value),
+            None => Err(RecommenderError::OOBError),
+        }
     }
 
     // Returns the Series representing the given page using the page dataframe
@@ -371,13 +399,10 @@ mod tests {
             .expect("Ratings not read")
             .collect()
             .expect("Ratings collected");
-        println!("{:?}", rating_frame);
         let column = match rating_frame.get(0).expect("Row found")[1] {
             AnyValue::UInt64(value) => value,
             _ => unreachable!(),
         };
-
-        println!("{:?}", column);
 
         rec.get_recommendations_by_uid(column, Vec::new(), Vec::new(), Vec::new())
             .expect("Recommendation not made")
