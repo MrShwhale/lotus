@@ -1,0 +1,49 @@
+html {
+    background-color: #FAFAFA;
+}
+
+.header {
+    margin: auto;
+}
+
+.title {
+    text-align: center;
+    font-size: 72px;
+    font-family: "gallant12x22";
+}
+
+/* This styling to center it is the worst, do NOT ship with this still in it!*/
+.input-box {
+    border-width: 3px;
+    border-color: #D3D3D3;
+    border-radius: 8px;
+    font-size: 30px;
+    box-sizing: border-box;
+    height: 45px;
+    position: relative;
+    top: -7px;
+}
+
+/* This styling to center it is the worst, do NOT ship with this still in it*/
+.search-button {
+    margin: auto;
+    height: 45px;
+    width: 45px;
+    background-image: url("./assets/Magnifying_glass_icon.svg");
+    background-size: 100%;
+    position: relative;
+    top: 2.5px;
+}
+
+.search {
+    margin: auto;
+    width: 50%;
+    height: 50px;
+}
+
+.rec-container {
+    margin: auto;
+    height: auto;
+    width: 80%;
+    border: 1px solid black;
+}
