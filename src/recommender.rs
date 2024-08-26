@@ -351,7 +351,7 @@ impl Recommender {
         match self
             .tags_frame
             .get(index.try_into().expect("usize should hold u16."))?
-            .get(1)?
+            .get(0)?
         {
             AnyValue::String(value) => Some(String::from(*value)),
             _ => unreachable!(),
