@@ -1,4 +1,4 @@
-use crate::lotus_core::User;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::mpsc::{RecvError, SendError};
 
@@ -57,3 +57,37 @@ impl Debug for ScrapeError {
         write!(f, "{}", message)
     }
 }
+
+/// Holds basic information about an article on the wiki
+#[derive(Debug, Hash, Serialize, Deserialize)]
+pub struct Article {
+    /// The name of the article, user-facing
+    pub name: String,
+    /// The internal page id
+    pub page_id: u64,
+    /// The indices of this article's tags in the taglist
+    pub tags: Vec<u16>,
+    /// The url suffix at which the page can be found
+    pub url: String,
+    /// The votes' values paired with the user id that cast the vote
+    pub votes: Vec<(i8, u64)>,
+}
+
+/// Holds basic information about a user on the wiki
+#[derive(Debug, Hash, Serialize, Deserialize)]
+pub struct User {
+    /// The name of the user, user-facing
+    pub name: String,
+    /// The url suffix at which the user's page can be found
+    pub url: String,
+    /// The internal user id
+    pub user_id: u64,
+}
+
+impl PartialEq for User {
+    fn eq(&self, other: &Self) -> bool {
+        self.user_id == other.user_id
+    }
+}
+
+impl Eq for User {}

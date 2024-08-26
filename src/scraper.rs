@@ -1,7 +1,6 @@
 mod scrape_writer;
 mod scraper_types;
 
-use crate::lotus_core::{Article, User};
 use const_format::formatcp;
 use http::HeaderMap;
 use parking_lot::Mutex;

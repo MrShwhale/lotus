@@ -1,5 +1,5 @@
 use super::{Article, ScrapeInfo, User};
-use crate::lotus_core::{ARTICLE_OUTPUT, OUTPUT_DIR, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
+use crate::{ARTICLE_OUTPUT, OUTPUT_DIR, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
 use arrow_array::{
     builder::{ListBuilder, UInt16Builder},
     ArrayRef, Int8Array, RecordBatch, StringArray, UInt64Array,
@@ -18,18 +18,18 @@ pub fn record_info(scraped_info: ScrapeInfo) -> Result<(), Error> {
     fs::create_dir_all(OUTPUT_DIR)?;
 
     // Save the user information as a parquet file
-    record_users(scraped_info.users)?;
+    record_users(scraped_info.users, USERS_OUTPUT)?;
 
     // Tags
-    record_tags(scraped_info.tags)?;
+    record_tags(scraped_info.tags, TAGS_OUTPUT)?;
 
     // Articles and votes
-    record_articles_votes(scraped_info.articles)?;
+    record_articles_votes(scraped_info.articles, ARTICLE_OUTPUT, VOTES_OUTPUT)?;
 
     Ok(())
 }
 
-fn record_users(users: HashMap<u64, User>) -> Result<(), Error> {
+fn record_users(users: HashMap<u64, User>, output_name: &str) -> Result<(), Error> {
     let schema = Schema::new(vec![
         Field::new("name", DataType::Utf8, false),
         Field::new("url", DataType::Utf8, false),
@@ -52,18 +52,22 @@ fn record_users(users: HashMap<u64, User>) -> Result<(), Error> {
         Arc::new(UInt64Array::from(user_id)),
     ];
 
-    record_batch(schema, USERS_OUTPUT, records)
+    record_batch(schema, output_name, records)
 }
 
-fn record_tags(tags: Vec<String>) -> Result<(), Error> {
+fn record_tags(tags: Vec<String>, output_name: &str) -> Result<(), Error> {
     let schema = Schema::new(vec![Field::new("tag", DataType::Utf8, false)]);
 
     let records: Vec<ArrayRef> = vec![Arc::new(StringArray::from(tags))];
 
-    record_batch(schema, TAGS_OUTPUT, records)
+    record_batch(schema, output_name, records)
 }
 
-fn record_articles_votes(articles: Vec<Article>) -> Result<(), Error> {
+fn record_articles_votes(
+    articles: Vec<Article>,
+    articles_output: &str,
+    votes_output: &str,
+) -> Result<(), Error> {
     // Article vecs
     let mut names = Vec::with_capacity(articles.len());
     let mut urls = Vec::with_capacity(articles.len());
@@ -92,8 +96,8 @@ fn record_articles_votes(articles: Vec<Article>) -> Result<(), Error> {
         }
     }
 
-    record_articles(names, urls, article_pids, tag_lists)?;
-    record_votes(vote_pids, uids, ratings)?;
+    record_articles(names, urls, article_pids, tag_lists, articles_output)?;
+    record_votes(vote_pids, uids, ratings, votes_output)?;
 
     Ok(())
 }
@@ -103,6 +107,7 @@ fn record_articles(
     urls: Vec<String>,
     pids: Vec<u64>,
     tag_lists: Vec<Vec<u16>>,
+    output_name: &str,
 ) -> Result<(), Error> {
     let tag_field = Field::new(
         "tags",
@@ -132,10 +137,15 @@ fn record_articles(
         Arc::new(builder.finish()),
     ];
 
-    record_batch(schema, ARTICLE_OUTPUT, records)
+    record_batch(schema, output_name, records)
 }
 
-fn record_votes(pids: Vec<u64>, uids: Vec<u64>, ratings: Vec<i8>) -> Result<(), Error> {
+fn record_votes(
+    pids: Vec<u64>,
+    uids: Vec<u64>,
+    ratings: Vec<i8>,
+    output_name: &str,
+) -> Result<(), Error> {
     let schema = Schema::new(vec![
         Field::new("pid", DataType::UInt64, false),
         Field::new("uid", DataType::UInt64, false),
@@ -148,7 +158,7 @@ fn record_votes(pids: Vec<u64>, uids: Vec<u64>, ratings: Vec<i8>) -> Result<(), 
         Arc::new(Int8Array::from(ratings)),
     ];
 
-    record_batch(schema, VOTES_OUTPUT, records)
+    record_batch(schema, output_name, records)
 }
 
 fn record_batch(schema: Schema, file_name: &str, record_vec: Vec<ArrayRef>) -> Result<(), Error> {

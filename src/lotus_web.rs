@@ -1,4 +1,3 @@
-mod lotus_core;
 mod recommender;
 
 use crate::recommender::Recommender;
