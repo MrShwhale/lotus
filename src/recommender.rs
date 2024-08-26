@@ -79,6 +79,7 @@ impl Recommender {
 
         eprintln!("{}Pivoted", RECOMENDER_HEADING);
 
+        // CONS storing as a Series instead of DF
         let tags_frame = set_up_tags_frame(options.tags_file)?;
 
         // TODO reorg this
@@ -344,6 +345,17 @@ impl Recommender {
             .collect();
         let similarity = similarity.with_name("similarity");
         Ok(DataFrame::new(vec![uids, similarity])?.lazy())
+    }
+
+    pub fn get_tag_by_id(&self, index: u16) -> Option<String> {
+        match self
+            .tags_frame
+            .get(index.try_into().expect("usize should hold u16."))?
+            .get(1)?
+        {
+            AnyValue::String(value) => Some(String::from(*value)),
+            _ => unreachable!(),
+        }
     }
 }
 

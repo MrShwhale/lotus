@@ -6,6 +6,7 @@ use axum::{response::Html, routing::get, Router};
 use lazy_static::lazy_static;
 use polars::prelude::*;
 use serde_json;
+use serde::Serialize;
 use std::collections::HashMap;
 
 lazy_static! {
@@ -13,6 +14,14 @@ lazy_static! {
 }
 
 static SERVER_HEADING: &str = "[SERVER] ";
+
+// CONS deleting this, it is basically Article but no votes
+#[derive(Serialize)]
+struct Recommendation {
+    name: String,
+    url: String,
+    tags: Vec<String>
+}
 
 #[tokio::main]
 async fn main() {
@@ -45,10 +54,7 @@ async fn root() -> Html<&'static str> {
 async fn get_rec(
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> String {
-    // TODO change this from taking uid to taking username
-    // CONS allow name, url, uid which will be checked against existing in that order
-
-    println!("{:?}", params);
+    eprintln!("{}Recommendation request with params: {:?}", SERVER_HEADING, params);
 
     let user_param = params.get("user");
 
@@ -91,25 +97,36 @@ async fn get_rec(
         }
     };
 
-    // CONS changing this to be some non-30 number/var
+    // TODO change this to be a very large number and handle limiting displayed client side
     let top_recs = recs.head(Some(30));
     let mut pages = Vec::new();
 
     for r in top_recs.column("pid").unwrap().iter() {
-        let mut page = HashMap::new();
+        let rec: Recommendation;
         match r {
             AnyValue::UInt64(pid) => match RECOMMENDER.get_page_by_pid(pid) {
                 Ok(vec) => {
-                    match vec[0] {
-                        AnyValue::String(page_name) => page.insert(String::from("name"), String::from(page_name)),
-                        _ => unreachable!(),
-                    };
-
-                    match vec[1] {
-                        AnyValue::String(page_url) => page.insert(String::from("url"), String::from(page_url)),
-                        _ => unreachable!(),
-                    };
-                    // CONS using the other 2 fields
+                    rec = Recommendation {
+                    name: match &vec[0] {
+                        AnyValue::String(page_name) => String::from(*page_name),
+                        _ => unreachable!()
+                    },
+                    url: match &vec[1] {
+                        AnyValue::String(page_url) => String::from(*page_url),
+                        _ => unreachable!()
+                    },
+                    tags: match &vec[3] {
+                        AnyValue::List(page_tags) => {
+                            page_tags.iter().map(|value| {
+                                match value {
+                                    AnyValue::UInt16(tag) => RECOMMENDER.get_tag_by_id(tag).unwrap(),
+                                    _ => unreachable!()
+                                }
+                            }).collect()
+                        },
+                        _ => unreachable!()
+                    }
+                    }
                 }
                 Err(e) => {
                     eprintln!("{:?}", e);
@@ -119,7 +136,7 @@ async fn get_rec(
             _ => unreachable!(),
         }
 
-        pages.push(page);
+        pages.push(rec);
     }
 
     serde_json::to_string(&pages).unwrap()
