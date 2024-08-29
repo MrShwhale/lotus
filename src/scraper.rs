@@ -1,6 +1,7 @@
 mod scrape_writer;
 mod scraper_types;
 
+use crate::{ARTICLE_OUTPUT, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
 use const_format::formatcp;
 use http::HeaderMap;
 use parking_lot::Mutex;
@@ -40,11 +41,10 @@ struct ScrapeInfo {
 pub struct Scraper {
     // /// Level of detail to log
     // log_level: u8,
-    // /// How to display logs (bitmap)
-    // log_method: u8,
     /// Maximum number of requests to send at once. Also the number of additional system threads to create
     max_concurrent_requests: u8,
-    /// Delay between requests in milliseconds
+    // Delay between requests in milliseconds. This happens once per thread, so for a "true" value
+    // it should be divided by max_concurrent_requests.
     download_delay: u64,
 }
 
@@ -52,15 +52,12 @@ impl Scraper {
     pub fn new() -> Scraper {
         Scraper {
             // log_level: 1,
-            // log_method: 3,
             max_concurrent_requests: 8,
             download_delay: 0,
         }
     }
 
-    /// Scrapes the full SCP wiki and records the information in a format
-    /// which the rest of this program can use.
-    /// TODO optimize. SOMETHING is making this slow.
+    // Scrapes the full SCP wiki and records the information in a format which the rest of this program can use.
     pub fn scrape(self, article_limit: usize, tag_pages: Vec<&str>) -> Result<(), ScrapeError> {
         // Get the list of articles to be scraped on the wiki
         println!("Getting all the list of pages...");
@@ -78,7 +75,13 @@ impl Scraper {
         let scraped_info = self.scrape_pages(scrape_list, tag_group)?;
 
         // Record the scraped info
-        scrape_writer::record_info(scraped_info)?;
+        scrape_writer::record_info(
+            scraped_info,
+            ARTICLE_OUTPUT,
+            TAGS_OUTPUT,
+            USERS_OUTPUT,
+            VOTES_OUTPUT,
+        )?;
 
         Ok(())
     }

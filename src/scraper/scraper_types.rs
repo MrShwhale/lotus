@@ -9,8 +9,8 @@ pub enum ThreadResponse {
     UserInfo(User),
 }
 
-/// Holds information about the errors which can happen while web scraping
-/// CONS make this more robust and specific with context-based information
+// Holds information about the errors which can happen while web scraping
+// CONS make this more robust and specific with context-based information
 pub enum ScrapeError {
     RegexError,
     WebError(reqwest::Error),
