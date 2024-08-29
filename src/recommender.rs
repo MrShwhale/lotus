@@ -1,15 +1,19 @@
 mod recommender_types;
 
 use pivot;
-use polars::prelude::*;
+use polars::{
+    datatypes::{PlHashMap, PlHashSet},
+    prelude::*,
+};
 use polars_core::utils::Container;
 use polars_lazy::{dsl::col, prelude::*};
 use recommender_types::*;
-use std::{collections::HashMap, fs::File};
+use std::fs::File;
 
 pub struct Recommender {
-    middle_norms: HashMap<String, f64>,
+    middle_norms: PlHashMap<String, f64>,
     page_frame: DataFrame,
+    page_map: PlHashMap<u64, usize>,
     rating_frame: LazyFrame,
     tags_frame: DataFrame,
     user_frame: DataFrame,
@@ -32,6 +36,18 @@ impl Recommender {
         // CONS adding the ability to run with fewer users/pages for testing purposes
         let user_frame = set_up_user_frame(options.users_file)?;
         let page_frame = set_up_page_frame(options.articles_file)?;
+        // Create a map of page ids to indicies here
+        let mut page_map = PlHashMap::with_capacity(page_frame.len());
+        for (i, pid) in page_frame.column("pid").unwrap().iter().enumerate() {
+            match pid {
+                AnyValue::UInt64(pid) => {
+                    // Should never have duplicate pids due to checks
+                    page_map.insert_unique_unchecked(pid, i);
+                }
+                _ => unreachable!(),
+            }
+        }
+
         let rating_frame = set_up_rating_frame(options.votes_file)?;
 
         // CONS
@@ -82,11 +98,11 @@ impl Recommender {
         // CONS storing as a Series instead of DF
         let tags_frame = set_up_tags_frame(options.tags_file)?;
 
-        // TODO reorg this
         let mut recommender = Recommender {
-            middle_norms: HashMap::new(),
+            middle_norms: PlHashMap::new(),
             rating_frame,
             page_frame,
+            page_map,
             tags_frame,
             user_frame,
             users_to_consider: options.users_to_consider,
@@ -177,33 +193,20 @@ impl Recommender {
 
     // Returns the Series representing the given page using the page dataframe
     pub fn get_page_by_pid(&self, pid: u64) -> Result<Vec<AnyValue>, RecommenderError> {
-        // CONS this might be the worst?
-        let pids = self.page_frame.column("pid")?;
-        let mut index = 0;
-        loop {
-            let extracted = match pids.get(index)? {
-                AnyValue::UInt64(value) => value,
-                _ => unreachable!(),
-            };
-
-            if extracted == pid {
-                break;
-            }
-
-            index += 1;
-        }
-
-        match self.page_frame.get(index) {
-            Some(value) => Ok(value),
+        match self.page_map.get(&pid) {
+            Some(index) => Ok(self
+                .page_frame
+                .get(*index)
+                .expect("Recorded index should always be in bounds.")),
             None => Err(RecommenderError::OOBError),
         }
     }
 
+    // CONS adding banned tags
     pub fn get_recommendations_by_uid(
         &self,
         uid: u64,
-        banned_tags: Vec<String>,
-        required_tags: Vec<String>,
+        required_tags: Vec<u16>,
         external_bans: Vec<u64>,
     ) -> Result<LazyFrame, RecommenderError> {
         let user_similarity = self.get_user_similarity(uid)?;
@@ -237,7 +240,7 @@ impl Recommender {
         let similar_weights = user_similarity.column("similarity")?;
 
         // Create mapping of uid to similarity
-        let mut similarity_map: HashMap<&str, f64> = HashMap::with_capacity(
+        let mut similarity_map: PlHashMap<&str, f64> = PlHashMap::with_capacity(
             self.users_to_consider
                 .try_into()
                 .expect("u32 to usize should be safe. Maybe use smaller SIMILAR_TO_USE?"),
@@ -299,10 +302,6 @@ impl Recommender {
             .gt(uid_unvote.clone() + f_uncert.clone())
             // Check if the user has downvoted already
             .or(uid_col.clone().lt(uid_unvote.clone() - f_uncert.clone()))
-            // TODO Check for the banned tags
-            // .or()
-            // TODO Check for the required tags
-            // .or()
             // Check if this has been externally banned
             .or(col("pid").is_in(lit(Series::from_vec("ext_bans", external_bans))));
 
@@ -313,6 +312,42 @@ impl Recommender {
             .collect()?;
 
         recommendations.insert_column(2, page_weights)?;
+
+        if required_tags.len() > 0 {
+            let req_tag_set: PlHashSet<_> = required_tags.into_iter().collect();
+
+            // OPT this is a little slow
+            // Create a Boolean Series which contains tag bans
+            let mask: Series = recommendations
+                .column("pid")
+                .unwrap()
+                .iter()
+                .map(|pid| {
+                    let pid = match pid {
+                        AnyValue::UInt64(value) => value,
+                        _ => unreachable!(),
+                    };
+                    let page = self.get_page_by_pid(pid).unwrap();
+                    let tag_list = match &page[3] {
+                        AnyValue::List(value) => value,
+                        _ => unreachable!(),
+                    };
+
+                    // Find page tags from pid
+                    let page_tags: PlHashSet<_> = tag_list
+                        .iter()
+                        .map(|value| match value {
+                            AnyValue::UInt16(int_val) => int_val,
+                            _ => unreachable!(),
+                        })
+                        .collect();
+
+                    page_tags.is_superset(&req_tag_set)
+                })
+                .collect();
+
+            recommendations = recommendations.filter(mask.bool()?)?;
+        }
 
         let recommendations = recommendations.lazy().filter(ignored_pages.not());
 
@@ -348,14 +383,28 @@ impl Recommender {
     }
 
     pub fn get_tag_by_id(&self, index: u16) -> Option<String> {
+        // eprintln!("{}Searching for tag with id: {}", RECOMENDER_HEADING, index);
         match self
             .tags_frame
             .get(index.try_into().expect("usize should hold u16."))?
             .get(0)?
         {
-            AnyValue::String(value) => Some(String::from(*value)),
+            AnyValue::String(value) => {
+                // eprintln!("{}Tag with id {} is {}", RECOMENDER_HEADING, index, *value);
+                Some(String::from(*value))
+            }
             _ => unreachable!(),
         }
+    }
+
+    pub fn get_tags(&self) -> Vec<&str> {
+        self.tags_frame
+            .column("tag")
+            .unwrap()
+            .str()
+            .unwrap()
+            .into_no_null_iter()
+            .collect()
     }
 }
 
@@ -416,7 +465,7 @@ mod tests {
             _ => unreachable!(),
         };
 
-        rec.get_recommendations_by_uid(column, Vec::new(), Vec::new(), Vec::new())
+        rec.get_recommendations_by_uid(column, Vec::new(), Vec::new())
             .expect("Recommendation not made")
             .collect()
             .expect("Not collected");

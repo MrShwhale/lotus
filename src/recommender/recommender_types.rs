@@ -1,6 +1,15 @@
-use crate::lotus_core::{ARTICLE_OUTPUT, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
 use polars::prelude::*;
 use std::{fmt::Debug, io};
+use const_format::formatcp;
+
+// Output location constants
+// TODO make these not copy/pasted from the other file
+pub const OUTPUT_DIR: &str = "./output";
+
+pub const ARTICLE_OUTPUT: &str = formatcp!("{}/articles.parquet", OUTPUT_DIR);
+pub const TAGS_OUTPUT: &str = formatcp!("{}/tags.parquet", OUTPUT_DIR);
+pub const USERS_OUTPUT: &str = formatcp!("{}/users.parquet", OUTPUT_DIR);
+pub const VOTES_OUTPUT: &str = formatcp!("{}/votes.parquet", OUTPUT_DIR);
 
 pub enum RecommenderError {
     PolarsError(PolarsError),
