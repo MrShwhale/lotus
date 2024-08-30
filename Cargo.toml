@@ -28,6 +28,17 @@ urlencoding = "2.1.3"
 askama_axum = "0.4.0"
 askama = "0.12.1"
 
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
+# [[bench]]
+# name = "make_recommender"
+# harness = false
+
+[lib]
+name = "lotus"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lotus_scrape"
 path = "src/lotus_scrape.rs"

@@ -1,7 +1,7 @@
 mod scrape_writer;
 mod scraper_types;
 
-use crate::{ARTICLE_OUTPUT, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
+use crate::{ARTICLE_OUTPUT, SCRAPER_HEADING, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
 use const_format::formatcp;
 use http::HeaderMap;
 use parking_lot::Mutex;
@@ -22,26 +22,24 @@ use std::{
 const WIKI_PREFIX: &str = "https://scp-wiki.wikidot.com/";
 const TAG_PREFIX: &str = formatcp!("{}system:page-tags/tag/", WIKI_PREFIX);
 
+// CONS putting into Scraper struct
 const MAX_RETRIES: u8 = 7;
 
-// api token found in https://github.com/scp-data/scp_crawler
-// It is not a real api token, just meant to placehold
-const API_TOKEN: &str = "123456";
+// This is not a real api token, meant for debugging purposes
+const WIKIDOT_TOKEN: &str = "123456";
 
-/// Holds all information that is recorded during a scrape
+// Holds all information that is recorded during a scrape
 struct ScrapeInfo {
     articles: Vec<Article>,
     users: HashMap<u64, User>,
-    // CONS replacing with something faster
     tags: Vec<String>,
 }
 
-/// Used to scrape the SCP wiki for votes, tags, and users,
-/// and stores that data
+// Used to scrape the SCP wiki for votes, tags, and users, and stores that data
 pub struct Scraper {
-    // /// Level of detail to log
+    // Level of detail to log
     // log_level: u8,
-    /// Maximum number of requests to send at once. Also the number of additional system threads to create
+    // Maximum number of requests to send at once. Also the number of additional system threads to create
     max_concurrent_requests: u8,
     // Delay between requests in milliseconds. This happens once per thread, so for a "true" value
     // it should be divided by max_concurrent_requests.
@@ -60,10 +58,10 @@ impl Scraper {
     // Scrapes the full SCP wiki and records the information in a format which the rest of this program can use.
     pub fn scrape(self, article_limit: usize, tag_pages: Vec<&str>) -> Result<(), ScrapeError> {
         // Get the list of articles to be scraped on the wiki
-        println!("Getting all the list of pages...");
+        eprintln!("{}Getting page list", SCRAPER_HEADING);
         let mut scrape_list = self.add_all_pages(tag_pages)?;
 
-        // Filter out duplicates (Literally just "The Troll", I think)
+        // Limit the number of pages (debugging, mostly)
         scrape_list.truncate(article_limit);
 
         // Scrape the tags
@@ -168,9 +166,9 @@ impl Scraper {
         Ok(scraped_info)
     }
 
-    /// Adds all tags on the wiki to the collection of tags.
-    /// This avoids having to build the taglist manually from the pages, which saves a lot of
-    /// complexity when multithreading
+    // Adds all tags on the wiki to the collection of tags.
+    // This avoids having to build the taglist manually from the pages, which saves a lot of
+    // complexity when multithreading
     fn add_all_tags(&self) -> Result<Vec<String>, ScrapeError> {
         let mut tag_collection = Vec::new();
         let tag_url = "https://scp-wiki.wikidot.com/system:page-tags";
@@ -180,7 +178,7 @@ impl Scraper {
         let response = retry_get_request(&client, tag_url)?;
         println!("Getting response");
         let document = Html::parse_document(response.text()?.as_str());
-        let page_item = Selector::parse(r#".tag"#).expect("Hardcoded selector shouldn't fail.");
+        let page_item = Selector::parse(".tag").expect("Hardcoded selector shouldn't fail.");
         let page_elements = document.select(&page_item);
 
         for page in page_elements {
@@ -192,13 +190,10 @@ impl Scraper {
         Ok(tag_collection)
     }
 
-    /// Adds all pages on the wiki to the list of pages to scrape.
-    /// Pages are determined to be "on" the wiki if they have one of the major tag types (things
-    /// like "tale" or "scp"). Since articles must (I think) have exactly one of these, it is
-    /// reasonable to use this to discover pages.
-    /// # Return
-    /// The articles in the returned vector are only the names and links to the articles
-    /// and do not have id, vote, or tag information.
+    // Adds all pages on the wiki to the list of pages to scrape.
+    // Pages are determined to be "on" the wiki if they have one of the major tag types (things
+    // like "tale" or "scp"). Since articles must (I think) have exactly one of these, it is
+    // reasonable to use this to discover pages.
     fn add_all_pages(&self, tag_types: Vec<&str>) -> Result<Vec<Mutex<Article>>, ScrapeError> {
         let mut tag_url;
         let mut articles = Vec::new();
@@ -216,10 +211,10 @@ impl Scraper {
         Ok(articles)
     }
 
-    /// Adds all articles on a system page to a Vec then returns it.
-    /// Does not add directly to the Vec to make multithreading easy.
-    /// This is blocking since this should be run before starting the real
-    /// scraper and should have a very limited number of requests.
+    // Adds all articles on a system page to a Vec then returns it.
+    // Does not add directly to the Vec to make multithreading easy.
+    // This is blocking since this should be run before starting the real
+    // scraper and should have a very limited number of requests.
     fn extract_links_from_syspage(
         &self,
         client: &blocking::Client,
@@ -391,12 +386,12 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             headers.insert("user-agent", "Mozilla/5.0".parse().expect("Hardcoded header shoud be valid."));
             headers.insert(
                 "Cookie",
-                format!("wikidot_token7={}", API_TOKEN).parse().expect("Predictable header should be valid."),
+                format!("wikidot_token7={}", WIKIDOT_TOKEN).parse().expect("Predictable header should be valid."),
             );
 
             let data = format!(
             "pageId={}&moduleName=pagerate%2FWhoRatedPageModule&wikidot_token7={}",
-            page_id, API_TOKEN
+            page_id, WIKIDOT_TOKEN
         );
 
             // Retry more times if getting EOF error

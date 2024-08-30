@@ -3,9 +3,14 @@ use std::fmt::Debug;
 use std::sync::mpsc::{RecvError, SendError};
 
 pub enum ThreadResponse {
+    // Either a request to a thread for an article to be scraped, or a response froma thread that the requested
+    // article has been scraped
     ArticleRequest(usize),
+    // Request to a thread to stop scraping things
     EndRequest,
+    // Response to EndRequest
     Alright,
+    // Request from thread to add a User to the set of users
     UserInfo(User),
 }
 
@@ -58,29 +63,29 @@ impl Debug for ScrapeError {
     }
 }
 
-/// Holds basic information about an article on the wiki
+// Holds basic information about an article on the wiki
 #[derive(Debug, Hash, Serialize, Deserialize)]
 pub struct Article {
-    /// The name of the article, user-facing
+    // The name of the article, user-facing
     pub name: String,
-    /// The internal page id
+    // The internal page id
     pub page_id: u64,
-    /// The indices of this article's tags in the taglist
+    // The indices of this article's tags in the taglist
     pub tags: Vec<u16>,
-    /// The url suffix at which the page can be found
+    // The url suffix at which the page can be found
     pub url: String,
-    /// The votes' values paired with the user id that cast the vote
+    // The votes' values paired with the user id that cast the vote
     pub votes: Vec<(i8, u64)>,
 }
 
-/// Holds basic information about a user on the wiki
+// Holds basic information about a user on the wiki
 #[derive(Debug, Hash, Serialize, Deserialize)]
 pub struct User {
-    /// The name of the user, user-facing
+    // The name of the user, user-facing
     pub name: String,
-    /// The url suffix at which the user's page can be found
+    // The url suffix at which the user's page can be found
     pub url: String,
-    /// The internal user id
+    // The internal user id
     pub user_id: u64,
 }
 
