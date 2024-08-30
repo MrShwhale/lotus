@@ -1,9 +1,10 @@
 mod scrape_writer;
 mod scraper_types;
 
-use crate::{ARTICLE_OUTPUT, SCRAPER_HEADING, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
+use crate::SCRAPER_HEADING;
 use const_format::formatcp;
 use http::HeaderMap;
+use lotus::{ARTICLE_OUTPUT, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
 use parking_lot::Mutex;
 use regex::Regex;
 use reqwest::blocking::{self, Client, Response};

@@ -1,12 +1,12 @@
 use crate::recommender::Recommender;
+use askama_axum::Template;
+use axum;
 use lazy_static::lazy_static;
+use polars::prelude::*;
+use serde::Serialize;
 use serde_json;
 use std::collections::HashMap;
-use polars::prelude::*;
 use urlencoding;
-use axum;
-use askama_axum::Template;
-use serde::Serialize;
 
 lazy_static! {
     pub static ref RECOMMENDER: Recommender = set_up_recommender();
@@ -45,7 +45,8 @@ pub async fn get_rec(
 ) -> String {
     eprintln!(
         "{}Recommendation request with params: {:?}",
-        crate::SERVER_HEADING, params
+        crate::SERVER_HEADING,
+        params
     );
 
     let user_param = params.get("user");

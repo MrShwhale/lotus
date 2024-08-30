@@ -1,4 +1,4 @@
-use lotus::{SCRAPER_HEADING, TAG_TYPES, scraper::Scraper};
+use lotus_scrape::{scraper::Scraper, SCRAPER_HEADING, TAG_TYPES};
 
 fn main() {
     eprintln!("{}Scraping the wiki...", SCRAPER_HEADING);
@@ -7,9 +7,9 @@ fn main() {
     let result = scraper.scrape(usize::MAX, Vec::from(TAG_TYPES));
 
     match result {
-        Ok(_) => eprintln!("{}Scrape completed successfully!", crate::SCRAPER_HEADING),
+        Ok(_) => eprintln!("{}Scrape completed successfully!", SCRAPER_HEADING),
         Err(e) => {
-            eprint!(
+            eprintln!(
                 "{}Something went wrong! Specifically, this: {:?}",
                 SCRAPER_HEADING, e
             );
