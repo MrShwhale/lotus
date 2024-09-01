@@ -1,28 +1,19 @@
+use lotus::{ARTICLE_OUTPUT, TAGS_OUTPUT, USERS_OUTPUT, VOTES_OUTPUT};
 use polars::prelude::*;
 use std::{fmt::Debug, io};
-use const_format::formatcp;
-
-// Output location constants
-// TODO make these not copy/pasted from the other file
-pub const OUTPUT_DIR: &str = "./output";
-
-pub const ARTICLE_OUTPUT: &str = formatcp!("{}/articles.parquet", OUTPUT_DIR);
-pub const TAGS_OUTPUT: &str = formatcp!("{}/tags.parquet", OUTPUT_DIR);
-pub const USERS_OUTPUT: &str = formatcp!("{}/users.parquet", OUTPUT_DIR);
-pub const VOTES_OUTPUT: &str = formatcp!("{}/votes.parquet", OUTPUT_DIR);
 
 pub enum RecommenderError {
-    PolarsError(PolarsError),
-    FileError(io::Error),
-    OOBError,
+    Polars(PolarsError),
+    File(io::Error),
+    Bounds,
 }
 
 impl Debug for RecommenderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
-            Self::PolarsError(err) => format!("Polars: {:?}", err),
-            Self::FileError(err) => format!("File: {:?}", err),
-            Self::OOBError => String::from("OOB somewhere"),
+            Self::Polars(err) => format!("Polars: {:?}", err),
+            Self::File(err) => format!("File: {:?}", err),
+            Self::Bounds => String::from("OOB somewhere"),
         };
 
         write!(f, "{}", message)
@@ -31,18 +22,19 @@ impl Debug for RecommenderError {
 
 impl From<PolarsError> for RecommenderError {
     fn from(value: PolarsError) -> Self {
-        RecommenderError::PolarsError(value)
+        RecommenderError::Polars(value)
     }
 }
 
 impl From<io::Error> for RecommenderError {
     fn from(value: io::Error) -> Self {
-        RecommenderError::FileError(value)
+        RecommenderError::File(value)
     }
 }
 
-// CONS choose between multiple floating point types?
+// CONS choose between multiple floating point types
 // CONS nonstatic lifetime
+// CONS properly encapsulate with getters
 #[derive(Clone)]
 pub struct RecommenderOptions {
     /// Location of the parquet file that contains article information
@@ -64,11 +56,52 @@ pub struct RecommenderOptions {
     pub votes_file: &'static str,
 }
 
-pub static DEFAULT_REC_OPTIONS: RecommenderOptions = RecommenderOptions {
-    articles_file: ARTICLE_OUTPUT,
-    min_votes: 10,
-    tags_file: TAGS_OUTPUT,
-    users_to_consider: 30,
-    users_file: USERS_OUTPUT,
-    votes_file: VOTES_OUTPUT,
-};
+impl RecommenderOptions {
+    /// Create an options instance with the default options
+    pub const fn new() -> RecommenderOptions {
+        RecommenderOptions {
+            articles_file: ARTICLE_OUTPUT,
+            min_votes: 10,
+            tags_file: TAGS_OUTPUT,
+            users_to_consider: 30,
+            users_file: USERS_OUTPUT,
+            votes_file: VOTES_OUTPUT,
+        }
+    }
+
+    pub fn with_articles_file(mut self, new_articles_file: &'static str) -> RecommenderOptions {
+        self.articles_file = new_articles_file;
+        self
+    }
+
+    pub fn with_min_votes(mut self, new_min_votes: u16) -> RecommenderOptions {
+        self.min_votes = new_min_votes;
+        self
+    }
+
+    pub fn with_tags_file(mut self, new_tags_file: &'static str) -> RecommenderOptions {
+        self.tags_file = new_tags_file;
+        self
+    }
+
+    pub fn with_users_to_consider(mut self, new_users_to_consider: u32) -> RecommenderOptions {
+        self.users_to_consider = new_users_to_consider;
+        self
+    }
+
+    pub fn with_users_file(mut self, new_users_file: &'static str) -> RecommenderOptions {
+        self.users_file = new_users_file;
+        self
+    }
+
+    pub fn with_votes_file(mut self, new_votes_file: &'static str) -> RecommenderOptions {
+        self.votes_file = new_votes_file;
+        self
+    }
+}
+
+impl Default for RecommenderOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
