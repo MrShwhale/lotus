@@ -23,9 +23,6 @@ use std::{
 const WIKI_PREFIX: &str = "https://scp-wiki.wikidot.com/";
 const TAG_PREFIX: &str = formatcp!("{}system:page-tags/tag/", WIKI_PREFIX);
 
-// CONS putting into Scraper struct
-const MAX_RETRIES: u8 = 7;
-
 // This is not a real api token, meant for debugging purposes
 const WIKIDOT_TOKEN: &str = "123456";
 
@@ -36,23 +33,24 @@ struct ScrapeInfo {
     tags: Vec<String>,
 }
 
-// Used to scrape the SCP wiki for votes, tags, and users, and stores that data
+/// Used to scrape the SCP wiki for votes, tags, and users, and stores that data
 pub struct Scraper {
-    // Level of detail to log
-    // log_level: u8,
-    // Maximum number of requests to send at once. Also the number of additional system threads to create
+    /// Maximum number of requests to send at once. Also the number of additional system threads to create
     max_concurrent_requests: u8,
-    // Delay between requests in milliseconds. This happens once per thread, so for a "true" value
-    // it should be divided by max_concurrent_requests.
+    /// Delay between requests in milliseconds. This happens once per thread, so for a "true" value
+    /// it should be divided by max_concurrent_requests.
     download_delay: u64,
+    /// Number of times to try a url before giving up. In reality, urls may be tried more than this
+    /// many times in rare circumstances.
+    max_retries: u8,
 }
 
 impl Scraper {
     pub fn new() -> Scraper {
         Scraper {
-            // log_level: 1,
             max_concurrent_requests: 8,
             download_delay: 0,
+            max_retries: 7,
         }
     }
 
@@ -271,179 +269,226 @@ impl Scraper {
 
         Ok(pages)
     }
-}
 
-fn spawn_scraper_thread<'a, 'scope, 'env>(
-    scope: &'scope Scope<'scope, 'env>,
-    main_tx: Sender<ThreadResponse>,
-    id: usize,
-    thread_rx: Receiver<ThreadResponse>,
-    articles_copy: Arc<&'a mut Vec<Mutex<Article>>>,
-    tags_copy: Arc<&'a mut Vec<String>>,
-) where
-    'a: 'scope,
-{
-    scope.spawn(move || {
-        let client = blocking::Client::new();
-        let page_id_pattern =
-        Regex::new(r#"WIKIREQUEST.info.pageId = (\d+);"#).expect("hardcoded regex, shouldn't fail");
-        let user_pattern = Regex::new(r#"userInfo\((\d+)\); return false;\\\"  ><img class=\\\"small\\\" src=\\\"https:\\\/\\\/www\.wikidot\.com\\\/avatar\.php\?userid=(?:\d+)&amp;amp;size=small&amp;amp;timestamp=(?:\d+)\\\" alt=\\\"(?:[^\\]+)\\\" style=\\\"background-image:url\(https:\\\/\\\/www\.wikidot\.com\\\/userkarma\.php\?u=(?:\d+)\)\\\"\\\/><\\\/a><a href=\\\"http:\\\/\\\/www\.wikidot\.com\\\/user:info\\\/([^\\]+)\\\" onclick=\\\"WIKIDOT\.page\.listeners\.userInfo\((?:\d+)\); return false;\\\" >([^<]+)<\\/a><\\/span>\\n        <span style=\\"color:#777\\">\\n(?: +)(.)"#).expect("Hardcoded regex should be valid.");
-        loop {
-            // Tell main which thread needs an article
-            main_tx
-                .send(ThreadResponse::ArticleRequest(id))
-                .expect("The reciever should never be deallocated.");
-
-            // Wait for a response
-            let article_index = match thread_rx
-                .recv()
-                .expect("The Sender should never be disconnected.")
-                {
-                    ThreadResponse::ArticleRequest(article_id) => article_id,
-                    ThreadResponse::EndRequest => {
-                        main_tx
-                            .send(ThreadResponse::Alright)
-                            .expect("The reciever should never be deallocated.");
-                        break;
-                    }
-                    // Main will only send the above responses
-                    _ => unreachable!(),
-                };
-
-            // Gets a reference to the selected article
-            let mut article = articles_copy
-                .get(article_index)
-                .expect("This should never be OOB.")
-                .lock();
-            let url = String::from(WIKI_PREFIX) + article.url.as_str();
-
-            // Make the article request
-            // TODO error checking
-            // TODO consolidate naming
-            println!("url sent: {}", url);
-
-            let document_text;
-            let mut retries = 0;
-
-            // BUG you DO NOT know why this request (and the other one with a similar loop around
-            // it) sometimes send a 200 response which have EOF in the middle of chunks. Fixing
-            // this is very important, below is *NOT* a fix
-            loop {
-                let response = retry_get_request(&client, &url).unwrap();
-
-                match response.text() {
-                    Ok(other) => {
-                        document_text = other;
-                        break
-                    },
-                    Err(e) => {
-                        if retries >= MAX_RETRIES {
-                            println!("\x1b[93mError\x1b[0m: {:?}", e);
-                            panic!("558");
-                        }
-                        retries += 1;
-                    }
-                };
-            }
-
-            println!("url_response: {}", url);
-
-            let page_id_captures = page_id_pattern.captures(document_text.as_str()).unwrap();
-
-            let page_id = page_id_captures.get(1).unwrap().as_str();
-            let page_id: u64 = page_id.parse().unwrap();
-
-            let document = Html::parse_document(document_text.as_str());
-            let selector =
-            Selector::parse(r#"div.page-tags a"#).expect("Hardcoded selector should not fail.");
-            let tags: Vec<_> = document
-                .select(&selector)
-                .map(|a| {
-                    let tag_string = a.inner_html();
-                    tags_copy
-                        .iter()
-                        .enumerate()
-                        .find(|(_, tag)| **tag == tag_string)
-                        .expect("All tags should be known by this point.")
-                        .0
-                        .try_into()
-                        .expect("There should never be more tags than a u16.")
-                })
-                .collect();
-
-            // Update the article
-            article.tags = tags;
-            article.page_id = page_id;
-
-            // Make the vote request
-            // TODO add error handling
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert(
-                "Content-Type",
-                "application/x-www-form-urlencoded; charset=UTF-8"
-                    .parse()
-                    .expect("Hardcoded header should be valid."),
-            );
-            headers.insert("user-agent", "Mozilla/5.0".parse().expect("Hardcoded header shoud be valid."));
-            headers.insert(
-                "Cookie",
-                format!("wikidot_token7={}", WIKIDOT_TOKEN).parse().expect("Predictable header should be valid."),
-            );
-
-            let data = format!(
-            "pageId={}&moduleName=pagerate%2FWhoRatedPageModule&wikidot_token7={}",
-            page_id, WIKIDOT_TOKEN
+    fn retry_get_request(&self, client: &Client, url: &str) -> Result<Response, ScrapeError> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "user-agent",
+            "Mozilla/5.0"
+                .parse()
+                .expect("Hardcoded header shoud be valid."),
         );
+        let data = String::new();
+        self.retry_request(client, &headers, &data, reqwest::Method::GET, url)
+    }
 
-            // Retry more times if getting EOF error
-            let text;
-            let mut retries = 0;
+    fn retry_request(
+        &self,
+        client: &Client,
+        headers: &HeaderMap,
+        data: &String,
+        method: reqwest::Method,
+        url: &str,
+    ) -> Result<Response, ScrapeError> {
+        let request;
+        let mut retries = 0;
 
-            loop {
-                let request = retry_request(&client, &headers, &data, reqwest::Method::POST, "https://scp-wiki.wikidot.com/ajax-module-connector.php").unwrap();
+        loop {
+            let response = client
+                .request(method.clone(), url)
+                .headers(headers.clone())
+                .body(data.clone())
+                .send();
 
-                match request.text() {
-                    Ok(other) => {
-                        text = other;
-                        break
-                    },
-                    Err(e) => {
-                        if retries >= MAX_RETRIES {
-                            println!("\x1b[93mError\x1b[0m: {:?}", e);
-                            panic!("558");
-                        }
-                        retries += 1;
+            match response {
+                Ok(value) => {
+                    request = value;
+                    break;
+                },
+                Err(err) => {
+                    retries += 1;
+                    if retries >= self.max_retries {
+                        return err;
                     }
-                };
-            }
-
-            // Update the article
-            // Send the user responses
-            // TODO add error handling
-            for reg_match in user_pattern.captures_iter(text.as_str()) {
-                // Tell the main thread about this user
-                // CONS remove if CPU bound and not mem bound
-                let user_id = reg_match.get(1).expect("UNEX; uid match").as_str().parse().expect("User id should be representable as u64.");
-                let url = String::from(reg_match.get(2).expect("UNEX; url match").as_str());
-                let name = String::from(reg_match.get(3).expect("UNEX; name match").as_str());
-                main_tx
-                    .send(ThreadResponse::UserInfo(User {
-                        user_id,
-                        url,
-                        name,
-                    }))
-                    .unwrap();
-
-                let vote = match reg_match.get(4).expect("UNEX; vote match").as_str() {
-                    "+" => 1,
-                    "-" => -1,
-                    _ => unreachable!()
-                };
-
-                article.votes.push((vote, user_id));
+                },
             }
         }
-    });
+
+        Ok(request)
+    }
+
+    fn spawn_scraper_thread<'a, 'scope, 'env>(
+        scope: &'scope Scope<'scope, 'env>,
+        main_tx: Sender<ThreadResponse>,
+        id: usize,
+        thread_rx: Receiver<ThreadResponse>,
+        articles_copy: Arc<&'a mut Vec<Mutex<Article>>>,
+        tags_copy: Arc<&'a mut Vec<String>>,
+    ) where
+        'a: 'scope,
+    {
+        scope.spawn(move || {
+            let client = blocking::Client::new();
+            let page_id_pattern =
+            Regex::new(r#"WIKIREQUEST.info.pageId = (\d+);"#).expect("hardcoded regex, shouldn't fail");
+            let user_pattern = Regex::new(r#"userInfo\((\d+)\); return false;\\\"  ><img class=\\\"small\\\" src=\\\"https:\\\/\\\/www\.wikidot\.com\\\/avatar\.php\?userid=(?:\d+)&amp;amp;size=small&amp;amp;timestamp=(?:\d+)\\\" alt=\\\"(?:[^\\]+)\\\" style=\\\"background-image:url\(https:\\\/\\\/www\.wikidot\.com\\\/userkarma\.php\?u=(?:\d+)\)\\\"\\\/><\\\/a><a href=\\\"http:\\\/\\\/www\.wikidot\.com\\\/user:info\\\/([^\\]+)\\\" onclick=\\\"WIKIDOT\.page\.listeners\.userInfo\((?:\d+)\); return false;\\\" >([^<]+)<\\/a><\\/span>\\n        <span style=\\"color:#777\\">\\n(?: +)(.)"#).expect("Hardcoded regex should be valid.");
+            loop {
+                // Tell main which thread needs an article
+                main_tx
+                    .send(ThreadResponse::ArticleRequest(id))
+                    .expect("The reciever should never be deallocated.");
+
+                // Wait for a response
+                let article_index = match thread_rx
+                    .recv()
+                    .expect("The Sender should never be disconnected.")
+                    {
+                        ThreadResponse::ArticleRequest(article_id) => article_id,
+                        ThreadResponse::EndRequest => {
+                            main_tx
+                                .send(ThreadResponse::Alright)
+                                .expect("The reciever should never be deallocated.");
+                            break;
+                        }
+                        // Main will only send the above responses
+                        _ => unreachable!(),
+                    };
+
+                // Gets a reference to the selected article
+                let mut article = articles_copy
+                    .get(article_index)
+                    .expect("This should never be OOB.")
+                    .lock();
+                let url = String::from(WIKI_PREFIX) + article.url.as_str();
+
+                // Make the article request
+                // TODO error checking
+                // TODO consolidate naming
+                println!("url sent: {}", url);
+
+                let document_text;
+                let mut retries = 0;
+
+                // BUG you DO NOT know why this request (and the other one with a similar loop around
+                // it) sometimes send a 200 response which have EOF in the middle of chunks. Fixing
+                // this is very important, below is *NOT* a fix
+                loop {
+                    let response = retry_get_request(&client, &url).unwrap();
+
+                    match response.text() {
+                        Ok(other) => {
+                            document_text = other;
+                            break
+                        },
+                        Err(e) => {
+                            if retries >= MAX_RETRIES {
+                                println!("\x1b[93mError\x1b[0m: {:?}", e);
+                                panic!("558");
+                            }
+                            retries += 1;
+                        }
+                    };
+                }
+
+                println!("url_response: {}", url);
+
+                let page_id_captures = page_id_pattern.captures(document_text.as_str()).unwrap();
+
+                let page_id = page_id_captures.get(1).unwrap().as_str();
+                let page_id: u64 = page_id.parse().unwrap();
+
+                let document = Html::parse_document(document_text.as_str());
+                let selector =
+                Selector::parse(r#"div.page-tags a"#).expect("Hardcoded selector should not fail.");
+                let tags: Vec<_> = document
+                    .select(&selector)
+                    .map(|a| {
+                        let tag_string = a.inner_html();
+                        tags_copy
+                            .iter()
+                            .enumerate()
+                            .find(|(_, tag)| **tag == tag_string)
+                            .expect("All tags should be known by this point.")
+                            .0
+                            .try_into()
+                            .expect("There should never be more tags than a u16.")
+                    })
+                    .collect();
+
+                // Update the article
+                article.tags = tags;
+                article.page_id = page_id;
+
+                // Make the vote request
+                // TODO add error handling
+                let mut headers = reqwest::header::HeaderMap::new();
+                headers.insert(
+                    "Content-Type",
+                    "application/x-www-form-urlencoded; charset=UTF-8"
+                        .parse()
+                        .expect("Hardcoded header should be valid."),
+                );
+                headers.insert("user-agent", "Mozilla/5.0".parse().expect("Hardcoded header shoud be valid."));
+                headers.insert(
+                    "Cookie",
+                    format!("wikidot_token7={}", WIKIDOT_TOKEN).parse().expect("Predictable header should be valid."),
+                );
+
+                let data = format!(
+                "pageId={}&moduleName=pagerate%2FWhoRatedPageModule&wikidot_token7={}",
+                page_id, WIKIDOT_TOKEN
+            );
+
+                // Retry more times if getting EOF error
+                let text;
+                let mut retries = 0;
+
+                loop {
+                    let request = retry_request(&client, &headers, &data, reqwest::Method::POST, "https://scp-wiki.wikidot.com/ajax-module-connector.php").unwrap();
+
+                    match request.text() {
+                        Ok(other) => {
+                            text = other;
+                            break
+                        },
+                        Err(e) => {
+                            if retries >= MAX_RETRIES {
+                                println!("\x1b[93mError\x1b[0m: {:?}", e);
+                                panic!("558");
+                            }
+                            retries += 1;
+                        }
+                    };
+                }
+
+                // Update the article
+                // Send the user responses
+                // TODO add error handling
+                for reg_match in user_pattern.captures_iter(text.as_str()) {
+                    // Tell the main thread about this user
+                    // CONS remove if CPU bound and not mem bound
+                    let user_id = reg_match.get(1).expect("UNEX; uid match").as_str().parse().expect("User id should be representable as u64.");
+                    let url = String::from(reg_match.get(2).expect("UNEX; url match").as_str());
+                    let name = String::from(reg_match.get(3).expect("UNEX; name match").as_str());
+                    main_tx
+                        .send(ThreadResponse::UserInfo(User {
+                            user_id,
+                            url,
+                            name,
+                        }))
+                        .unwrap();
+
+                    let vote = match reg_match.get(4).expect("UNEX; vote match").as_str() {
+                        "+" => 1,
+                        "-" => -1,
+                        _ => unreachable!()
+                    };
+
+                    article.votes.push((vote, user_id));
+                }
+            }
+        });
+    }
 }
 
 fn run_messaging(
@@ -478,52 +523,6 @@ fn run_messaging(
             _ => unreachable!(),
         };
     }
-}
-
-fn retry_get_request(client: &Client, url: &str) -> Result<Response, ScrapeError> {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "user-agent",
-        "Mozilla/5.0"
-            .parse()
-            .expect("Hardcoded header shoud be valid."),
-    );
-    let data = String::new();
-    retry_request(client, &headers, &data, reqwest::Method::GET, url)
-}
-
-fn retry_request(
-    client: &Client,
-    headers: &HeaderMap,
-    data: &String,
-    method: reqwest::Method,
-    url: &str,
-) -> Result<Response, ScrapeError> {
-    let request;
-    let mut retries = 0;
-
-    loop {
-        let response = client
-            .request(method.clone(), url)
-            .headers(headers.clone())
-            .body(data.clone())
-            .send();
-
-        if response.is_err() {
-            retries += 1;
-            if retries >= MAX_RETRIES {
-                return match response {
-                    Ok(_) => unreachable!(),
-                    Err(err) => Err(err.into()),
-                };
-            }
-        } else {
-            request = response.expect("Manully checked before.");
-            break;
-        }
-    }
-
-    Ok(request)
 }
 
 #[cfg(test)]
