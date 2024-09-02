@@ -3,8 +3,9 @@ use std::fmt::Debug;
 use std::sync::mpsc::{RecvError, SendError};
 
 pub enum ThreadResponse {
-    /// Either a request to a thread for an article to be scraped, or a response froma thread that the requested
-    /// article has been scraped
+    /// A request to a thread for an article to be scraped
+    ArticleResponse(RawPointerWrapper),
+    /// A response from a thread that the requested article has been scraped
     ArticleRequest(usize),
     /// Request to a thread to stop scraping things
     EndRequest,
@@ -63,6 +64,23 @@ impl Debug for ScrapeError {
     }
 }
 
+#[derive(Clone)]
+pub struct RawPointerWrapper {
+    pub raw: *mut Article,
+}
+
+impl RawPointerWrapper {
+    // Get a mutable reference to the pointer
+    // # Safety
+    // The caller must be sure that this is not being referenced by multiple things, especially
+    // across threads
+    pub unsafe fn get_mut_ptr(&self) -> &mut Article {
+        &mut *self.raw
+    }
+}
+
+unsafe impl Send for RawPointerWrapper {}
+
 /// Holds basic information about an article on the wiki
 #[derive(Debug, Hash, Serialize, Deserialize)]
 pub struct Article {
@@ -77,6 +95,8 @@ pub struct Article {
     /// The votes' values paired with the user id that cast the vote
     pub votes: Vec<(i8, u64)>,
 }
+
+unsafe impl Send for Article {}
 
 /// Holds basic information about a user on the wiki
 #[derive(Debug, Hash, Serialize, Deserialize)]

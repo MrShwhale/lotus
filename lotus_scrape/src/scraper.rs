@@ -6,7 +6,6 @@ use const_format::formatcp;
 use http::HeaderMap;
 use lazy_static::lazy_static;
 use lotus::OutputFiles;
-use parking_lot::Mutex;
 use regex::Regex;
 use reqwest::blocking::{self, Client, Response};
 use scraper::{Html, Selector};
@@ -91,7 +90,7 @@ impl Scraper {
     /// Scrapes the links to the given articles, overwriting existing data in each element
     fn scrape_pages(
         &self,
-        mut articles: Vec<Mutex<Article>>,
+        mut articles: Vec<Article>,
         mut tags: Vec<String>,
     ) -> Result<ScrapeInfo, ScrapeError> {
         let num_articles = articles.len();
@@ -106,7 +105,6 @@ impl Scraper {
 
         // Create a shared reference here
         // Terrible things will happen to it later
-        let articles_arc = Arc::new(&mut articles);
         let tags_arc = Arc::new(&mut tags);
 
         // Create the threads
@@ -115,14 +113,14 @@ impl Scraper {
         lazy_static::initialize(&USER_PATTERN);
         thread::scope(|scope| {
             for (id, thread_rx) in thread_rxs.into_iter().enumerate() {
-                let articles_copy = articles_arc.clone();
                 let tags_copy = tags_arc.clone();
                 let main_tx = main_tx.clone();
-                spawn_scraper_thread(&scope, main_tx, id, thread_rx, articles_copy, tags_copy);
+                spawn_scraper_thread(&scope, main_tx, id, thread_rx, tags_copy);
             }
 
             eprintln!("{}Actually scraping the pages...", SCRAPER_HEADING);
             run_messaging(
+                &mut articles,
                 num_articles,
                 &main_rx,
                 &thread_txs,
@@ -160,10 +158,7 @@ impl Scraper {
         })?;
 
         let scraped_info = ScrapeInfo {
-            articles: articles
-                .into_iter()
-                .map(|mutex| mutex.into_inner())
-                .collect(),
+            articles,
             users,
             tags,
         };
@@ -198,7 +193,7 @@ impl Scraper {
     // Pages are determined to be "on" the wiki if they have one of the major tag types (things
     // like "tale" or "scp"). Since articles must (I think) have exactly one of these, it is
     // reasonable to use this to discover pages.
-    fn create_page_list(&self, tag_types: Vec<&str>) -> Result<Vec<Mutex<Article>>, ScrapeError> {
+    fn create_page_list(&self, tag_types: Vec<&str>) -> Result<Vec<Article>, ScrapeError> {
         let mut tag_url;
         let mut articles = Vec::new();
         let client = blocking::Client::new();
@@ -217,6 +212,7 @@ impl Scraper {
 }
 
 fn run_messaging(
+    articles: &mut Vec<Article>,
     num_articles: usize,
     main_rx: &Receiver<ThreadResponse>,
     thread_txs: &Vec<Sender<ThreadResponse>>,
@@ -231,10 +227,16 @@ fn run_messaging(
         let response = main_rx.recv()?;
         match response {
             ThreadResponse::ArticleRequest(id) => {
+                let next_article_ptr = RawPointerWrapper {
+                    raw: articles
+                        .get_mut(next_article)
+                        .expect("next_article should never be OOB."),
+                };
+
                 thread_txs
                     .get(id)
                     .expect("ID should never be OOB.")
-                    .send(ThreadResponse::ArticleRequest(next_article))?;
+                    .send(ThreadResponse::ArticleResponse(next_article_ptr))?;
 
                 next_article += 1;
                 thread::sleep(wait_time);
@@ -256,7 +258,7 @@ fn run_messaging(
 fn extract_links_from_syspage(
     client: &blocking::Client,
     url: &str,
-) -> Result<Vec<Mutex<Article>>, ScrapeError> {
+) -> Result<Vec<Article>, ScrapeError> {
     let response = retry_get_request(client, url)?;
     let document = Html::parse_document(response.text()?.as_str());
     let page_item = Selector::parse(r#"div[class="pages-list-item"]"#)
@@ -295,13 +297,13 @@ fn extract_links_from_syspage(
             None => return Err(ScrapeError::RegexError),
         };
 
-        pages.push(Mutex::new(Article {
+        pages.push(Article {
             name,
             url,
             page_id: 0,
             tags: Vec::new(),
             votes: Vec::new(),
-        }));
+        });
     }
 
     Ok(pages)
@@ -358,7 +360,6 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
     main_tx: Sender<ThreadResponse>,
     id: usize,
     thread_rx: Receiver<ThreadResponse>,
-    articles_copy: Arc<&'a mut Vec<Mutex<Article>>>,
     tags_copy: Arc<&'a mut Vec<String>>,
 ) where
     'a: 'scope,
@@ -372,11 +373,11 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
                 .expect("The reciever should never be deallocated.");
 
             // Wait for a response
-            let article_index = match thread_rx
+            let article_ptr = match thread_rx
                 .recv()
                 .expect("The sender should never be disconnected.")
             {
-                ThreadResponse::ArticleRequest(article_id) => article_id,
+                ThreadResponse::ArticleResponse(raw_pointer) => raw_pointer,
                 ThreadResponse::EndRequest => {
                     main_tx
                         .send(ThreadResponse::Alright)
@@ -388,10 +389,8 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             };
 
             // Gets a reference to the selected article
-            let mut article = articles_copy
-                .get(article_index)
-                .expect("This should never be OOB.")
-                .lock();
+            let article: &mut Article = unsafe { article_ptr.get_mut_ptr() };
+
             let url = String::from(WIKI_PREFIX) + article.url.as_str();
 
             // Make the article request
@@ -460,7 +459,7 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             };
 
             // Send the user responses
-            match update_article(text, &main_tx, &mut article) {
+            match update_article(text, &main_tx, article) {
                 Err(e) => panic!("Thread error: {:?}", e),
                 _ => (),
             }
