@@ -20,7 +20,7 @@ pub enum ScrapeError {
     WebError(reqwest::Error),
     WritingError,
     MessagingError,
-    // ThreadError,
+    ThreadError,
 }
 
 impl From<reqwest::Error> for ScrapeError {
@@ -55,7 +55,8 @@ impl Debug for ScrapeError {
             ScrapeError::WritingError => String::from("There was an error in writing to a file."),
             ScrapeError::MessagingError => {
                 String::from("There was an error in sending a message between threads.")
-            } //ScrapeError::ThreadError => String::from("There was an error in one of the threads."),
+            }
+            ScrapeError::ThreadError => String::from("There was an error in one of the threads."),
         };
 
         write!(f, "{}", message)
@@ -95,3 +96,78 @@ impl PartialEq for User {
 }
 
 impl Eq for User {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn total_inequality() {
+        let user_1 = User {
+            name: String::from("Shark Lover"),
+            url: String::from("shark-lover"),
+            user_id: 1,
+        };
+
+        let user_2 = User {
+            name: String::from("Whale Lover"),
+            url: String::from("shark-lover"),
+            user_id: 2,
+        };
+
+        assert!(user_1 == user_2);
+    }
+
+    #[test]
+    fn total_equality() {
+        let user_1 = User {
+            name: String::from("Shark Lover"),
+            url: String::from("shark-lover"),
+            user_id: 1,
+        };
+
+        let user_2 = User {
+            name: String::from("Shark Lover"),
+            url: String::from("shark-lover"),
+            user_id: 1,
+        };
+
+        assert!(user_1 == user_2);
+    }
+
+    #[test]
+    fn partial_equality() {
+        let user_1 = User {
+            name: String::from("Shark Lover"),
+            url: String::from("shark-lover"),
+            user_id: 1,
+        };
+
+        let user_2 = User {
+            name: String::from("Whale Lover"),
+            url: String::from("shark-lover"),
+            user_id: 1,
+        };
+
+        assert!(user_1 == user_2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn partial_inequality() {
+        let user_1 = User {
+            name: String::from("Shark Lover"),
+            url: String::from("shark-lover"),
+            user_id: 1,
+        };
+
+        let user_2 = User {
+            name: String::from("Shark Lover"),
+            url: String::from("shark-lover"),
+            user_id: 2,
+        };
+
+        assert!(user_1 == user_2);
+    }
+}

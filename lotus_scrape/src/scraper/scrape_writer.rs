@@ -4,6 +4,7 @@ use arrow_array::{
     ArrayRef, Int8Array, RecordBatch, StringArray, UInt64Array,
 };
 use arrow_schema::{DataType, Field, Schema};
+use lotus::OutputFiles;
 use parquet::arrow::ArrowWriter;
 use std::{collections::HashMap, fs::File, io::Error, sync::Arc};
 
@@ -13,17 +14,15 @@ const WRITER_HEADING: &str = "[WRITER] ";
 // CONS adding schema description comments to each parquet save function
 
 // Record all the scraped info to parquet files for fast, efficient access
-pub fn record_info(
-    scraped_info: ScrapeInfo,
-    article_output: &str,
-    tag_output: &str,
-    user_output: &str,
-    vote_output: &str,
-) -> Result<(), Error> {
+pub fn record_info(scraped_info: ScrapeInfo, outputs: OutputFiles) -> Result<(), Error> {
     eprintln!("{}Starting writing", WRITER_HEADING);
-    record_articles_votes(scraped_info.articles, article_output, vote_output)?;
-    record_users(scraped_info.users, user_output)?;
-    record_tags(scraped_info.tags, tag_output)?;
+    record_articles_votes(
+        scraped_info.articles,
+        outputs.article_output,
+        outputs.votes_output,
+    )?;
+    record_users(scraped_info.users, outputs.users_output)?;
+    record_tags(scraped_info.tags, outputs.tags_output)?;
     eprintln!("{}Writing completed successfully", WRITER_HEADING);
     Ok(())
 }
@@ -173,6 +172,7 @@ fn record_votes(
 
 // Records information in a parquet file
 fn record_batch(schema: Schema, file_name: &str, record_vec: Vec<ArrayRef>) -> Result<(), Error> {
+    println!("{} whale", file_name);
     let mut buffer = File::create(file_name)?;
     let to_write = RecordBatch::try_new(Arc::new(schema), record_vec)
         .expect("Hardcoded schema should align with other hardcoded schema");
