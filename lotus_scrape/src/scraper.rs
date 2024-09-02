@@ -32,10 +32,10 @@ const WIKIDOT_TOKEN: &str = "123456";
 lazy_static! {
     pub static ref PAGE_ID_PATTERN: Regex =
     Regex::new(r#"WIKIREQUEST.info.pageId = (\d+);"#).expect("hardcoded regex, shouldn't fail");
-    pub static ref USER_PATTERN: Regex = Regex::new(r#"userInfo\((\d+)\); return false;\\\"  ><img class=\\\"small\\\" src=\\\"https:\\\/\\\/www\.wikidot\.com\\\/avatar\.php\?userid=(?:\d+)&amp;amp;size=small&amp;amp;timestamp=(?:\d+)\\\" alt=\\\"(?:[^\\]+)\\\" style=\\\"background-image:url\(https:\\\/\\\/www\.wikidot\.com\\\/userkarma\.php\?u=(?:\d+)\)\\\"\\\/><\\\/a><a href=\\\"http:\\\/\\\/www\.wikidot\.com\\\/user:info\\\/([^\\]+)\\\" onclick=\\\"WIKIDOT\.page\.listeners\.userInfo\((?:\d+)\); return false;\\\" >([^<]+)<\\/a><\\/span>\\n        <span style=\\"color:#777\\">\\n(?: +)(.)"#).expect("Hardcoded regex should be valid.");
+    pub static ref USER_PATTERN: Regex = Regex::new(r#"userInfo\((\d+)\); return false;\\\"  ><img class=\\\"small\\\" src=\\\"https:\\\/\\\/www\.wikidot\.com\\\/avatar\.php\?userid=(?:\d+)&amp;amp;size=small&amp;amp;timestamp=(?:\d+)\\\" alt=\\\"(?:[^\\]+)\\\" style=\\\"background-image:url\(https:\\\/\\\/www\.wikidot\.com\\\/userkarma\.php\?u=(?:\d+)\)\\\"\\\/><\\\/a><a href=\\\"http:\\\/\\\/www\.wikidot\.com\\\/user:info\\\/([^\\]+)\\\" onclick=\\\"WIKIDOT\.page\.listeners\.userInfo\((?:\d+)\); return false;\\\" >([^<]+)<\\/a><\\/span>\\n        <span style=\\"color:#777\\">\\n(?: +)(.)"#).expect("Hardcoded regex should be valid");
 }
 
-// Holds all information that is recorded during a scrape
+/// Holds all information that is recorded during a scrape
 struct ScrapeInfo {
     articles: Vec<Article>,
     users: HashMap<u64, User>,
@@ -59,32 +59,56 @@ impl Scraper {
         }
     }
 
-    // Scrapes the full SCP wiki and records the information in a format which the rest of this program can use.
+    /// Scrapes the SCP wiki and records the information in a format which the rest of this program can use.
     pub fn scrape(
         self,
         article_limit: usize,
         tag_pages: Vec<&str>,
         outputs: OutputFiles,
     ) -> Result<(), ScrapeError> {
-        // Get the list of articles to be scraped on the wiki
         eprintln!("{}Getting page list", SCRAPER_HEADING);
         let mut scrape_list = self.create_page_list(tag_pages)?;
 
         // Limit the number of pages (debugging, mostly)
         scrape_list.truncate(article_limit);
 
-        // Scrape the tags
-        println!("Getting the list of tags...");
+        eprintln!("{}Getting the list of tags", SCRAPER_HEADING);
         let tag_group = self.scrape_all_tags()?;
 
-        // Actually scrape each article
-        println!("Scraping the pages...");
+        println!("{}Scraping the pages", SCRAPER_HEADING);
         let scraped_info = self.scrape_pages(scrape_list, tag_group)?;
 
-        // Record the scraped info
         scrape_writer::record_info(scraped_info, outputs)?;
 
         Ok(())
+    }
+
+    /// Adds all pages on the wiki to the list of pages to scrape.
+    /// Pages are determined to be "on" the wiki if they have one of the major tag types (things
+    /// like "tale" or "scp"). Since articles must (I think) have exactly one of these, it is
+    /// reasonable to use this to discover pages.
+    fn create_page_list(&self, tag_types: Vec<&str>) -> Result<Vec<Article>, ScrapeError> {
+        let mut tag_url;
+        let mut articles = Vec::new();
+        let client = blocking::Client::new();
+
+        let page_item = Selector::parse(r#"div[class="pages-list-item"]"#)
+            .expect("Hardcoded selector shouldn't fail");
+        let name_pattern = Regex::new(r#"<a href="(?<url>.+)">(?<name>.+)+</a>"#)
+            .expect("Hardcoded regex shouldn't fail");
+
+        for tag in tag_types.iter() {
+            tag_url = String::from(TAG_PREFIX);
+            tag_url.push_str(tag);
+            let mut pages =
+                extract_links_from_syspage(&client, &tag_url, &page_item, &name_pattern)?;
+            articles.append(&mut pages);
+
+            // Avoid throttling, even at 0 delay (otherwise this is too fast).
+            thread::sleep(Duration::from_millis(self.download_delay + 100));
+        }
+
+        Ok(articles)
     }
 
     /// Scrapes the links to the given articles, overwriting existing data in each element
@@ -103,8 +127,6 @@ impl Scraper {
         let (thread_txs, thread_rxs): (Vec<_>, Vec<_>) =
             (0..num_threads).map(|_| mpsc::channel()).unzip();
 
-        // Create a shared reference here
-        // Terrible things will happen to it later
         let tags_arc = Arc::new(&mut tags);
 
         // Create the threads
@@ -130,7 +152,8 @@ impl Scraper {
 
             // Ask threads to stop
             for thread_tx in thread_txs.iter() {
-                // Dead threads are considered lost
+                // Any dead threads mean the scope is going to panic otherwise, so leave gracefully
+                // now
                 if let Err(_) = thread_tx.send(ThreadResponse::EndRequest) {
                     return Err(ScrapeError::ThreadError);
                 };
@@ -146,10 +169,11 @@ impl Scraper {
 
                 match thread_message {
                     ThreadResponse::Alright | ThreadResponse::ArticleRequest(_) => num_alive -= 1,
+                    // Though they have all been told to stop, threads only recieve requests after
+                    // sending all remaining user info, so it has to be handlede as well
                     ThreadResponse::UserInfo(user) => {
                         users.insert(user.user_id, user);
                     }
-                    // Threads will only send the above 2 requests
                     _ => unreachable!(),
                 };
             }
@@ -166,18 +190,18 @@ impl Scraper {
         Ok(scraped_info)
     }
 
-    // Adds all tags on the wiki to the collection of tags.
-    // This avoids having to build the taglist manually from the pages, which saves a lot of
-    // complexity when multithreading
+    /// Adds all tags on the wiki to the collection of tags.
+    /// This avoids having to build the taglist manually from the pages, which saves a lot of
+    /// complexity when multithreading
     fn scrape_all_tags(&self) -> Result<Vec<String>, ScrapeError> {
         let mut tag_collection = Vec::new();
         let client = blocking::Client::new();
 
-        println!("Making request");
+        eprintln!("{}Making tags page request", SCRAPER_HEADING);
         let response = retry_get_request(&client, TAG_PREFIX)?;
-        println!("Getting response");
+        eprintln!("{}Getting tags page response", SCRAPER_HEADING);
         let document = Html::parse_document(response.text()?.as_str());
-        let page_item = Selector::parse(".tag").expect("Hardcoded selector shouldn't fail.");
+        let page_item = Selector::parse(".tag").expect("Hardcoded selector shouldn't fail");
         let page_elements = document.select(&page_item);
 
         for page in page_elements {
@@ -188,29 +212,9 @@ impl Scraper {
 
         Ok(tag_collection)
     }
-
-    // Adds all pages on the wiki to the list of pages to scrape.
-    // Pages are determined to be "on" the wiki if they have one of the major tag types (things
-    // like "tale" or "scp"). Since articles must (I think) have exactly one of these, it is
-    // reasonable to use this to discover pages.
-    fn create_page_list(&self, tag_types: Vec<&str>) -> Result<Vec<Article>, ScrapeError> {
-        let mut tag_url;
-        let mut articles = Vec::new();
-        let client = blocking::Client::new();
-        for tag in tag_types.iter() {
-            tag_url = String::from(TAG_PREFIX);
-            tag_url.push_str(tag);
-            let mut pages = extract_links_from_syspage(&client, &tag_url)?;
-            articles.append(&mut pages);
-
-            // Avoid throttling, even at 0 delay (otherwise this is too fast).
-            thread::sleep(Duration::from_millis(self.download_delay + 100));
-        }
-
-        Ok(articles)
-    }
 }
 
+/// Run the messaging mechanism until all the articles have been sent out (though not recieved)
 fn run_messaging(
     articles: &mut Vec<Article>,
     num_articles: usize,
@@ -223,19 +227,18 @@ fn run_messaging(
     let wait_time = Duration::from_millis(download_delay);
 
     while next_article < num_articles {
-        // Wait for a perm request
         let response = main_rx.recv()?;
         match response {
             ThreadResponse::ArticleRequest(id) => {
                 let next_article_ptr = RawPointerWrapper {
                     raw: articles
                         .get_mut(next_article)
-                        .expect("next_article should never be OOB."),
+                        .expect("next_article should never be OOB"),
                 };
 
                 thread_txs
                     .get(id)
-                    .expect("ID should never be OOB.")
+                    .expect("ID should never be OOB")
                     .send(ThreadResponse::ArticleResponse(next_article_ptr))?;
 
                 next_article += 1;
@@ -251,22 +254,19 @@ fn run_messaging(
     Ok(())
 }
 
-// Adds all articles on a system page to a Vec then returns it.
-// Does not add directly to the Vec to make multithreading easy.
-// This is blocking since this should be run before starting the real
-// scraper and should have a very limited number of requests.
+/// Adds all articles on a system page to a Vec then returns it.
+/// Does not add directly to the Vec to make multithreading easy.
+/// This is blocking since this should be run before starting the real
+/// scraper and should have a very limited number of requests.
 fn extract_links_from_syspage(
     client: &blocking::Client,
     url: &str,
+    page_item: &Selector,
+    name_pattern: &Regex,
 ) -> Result<Vec<Article>, ScrapeError> {
     let response = retry_get_request(client, url)?;
     let document = Html::parse_document(response.text()?.as_str());
-    let page_item = Selector::parse(r#"div[class="pages-list-item"]"#)
-        .expect("Hardcoded selector shouldn't fail");
-    let page_elements = document.select(&page_item);
-
-    let name_pattern = Regex::new(r#"<a href="(?<url>.+)">(?<name>.+)+</a>"#)
-        .expect("Hardcoded regex shouldn't fail");
+    let page_elements = document.select(page_item);
 
     let mut pages = Vec::new();
     for page in page_elements {
@@ -281,7 +281,7 @@ fn extract_links_from_syspage(
             Some(url) => String::from(
                 url.as_str()
                     .get(1..)
-                    .expect("Valid links should always have more than 1 char."),
+                    .expect("Valid links should always have more than 1 char"),
             ),
             None => return Err(ScrapeError::RegexError),
         };
@@ -309,18 +309,20 @@ fn extract_links_from_syspage(
     Ok(pages)
 }
 
+/// Shorthand to send a get request to the url as many times as it takes
 fn retry_get_request(client: &Client, url: &str) -> Result<Response, ScrapeError> {
     let mut headers = HeaderMap::new();
     headers.insert(
         "user-agent",
         "Mozilla/5.0"
             .parse()
-            .expect("Hardcoded header shoud be valid."),
+            .expect("Hardcoded header shoud be valid"),
     );
     let data = String::new();
     retry_request(client, &headers, &data, reqwest::Method::GET, url)
 }
 
+/// Retry the given request several times to avoid minor internet errors
 fn retry_request(
     client: &Client,
     headers: &HeaderMap,
@@ -355,6 +357,7 @@ fn retry_request(
     Ok(request)
 }
 
+/// Create a thread within the scope that will make scraper requests
 fn spawn_scraper_thread<'a, 'scope, 'env>(
     scope: &'scope Scope<'scope, 'env>,
     main_tx: Sender<ThreadResponse>,
@@ -370,30 +373,29 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             // Tell main which thread needs an article
             main_tx
                 .send(ThreadResponse::ArticleRequest(id))
-                .expect("The reciever should never be deallocated.");
+                .expect("The reciever should never be deallocated");
 
             // Wait for a response
             let article_ptr = match thread_rx
                 .recv()
-                .expect("The sender should never be disconnected.")
+                .expect("The sender should never be disconnected")
             {
                 ThreadResponse::ArticleResponse(raw_pointer) => raw_pointer,
                 ThreadResponse::EndRequest => {
                     main_tx
                         .send(ThreadResponse::Alright)
-                        .expect("The reciever should never be deallocated.");
+                        .expect("The reciever should never be deallocated");
                     break;
                 }
-                // Main will only send the above responses
                 _ => unreachable!(),
             };
 
-            // Gets a reference to the selected article
+            // This is safe since the main thread only passes out one raw mutable pointer at a
+            // time.
             let article: &mut Article = unsafe { article_ptr.get_mut_ptr() };
 
             let url = String::from(WIKI_PREFIX) + article.url.as_str();
 
-            // Make the article request
             eprintln!("{}Request sent: {}", SCRAPER_HEADING, url);
 
             let document_text;
@@ -420,7 +422,7 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
                 };
             }
 
-            eprintln!("{}url_response: {}", SCRAPER_HEADING, url);
+            eprintln!("{}Response recieved: {}", SCRAPER_HEADING, url);
 
             let page_id_captures = PAGE_ID_PATTERN
                 .captures(document_text.as_str())
@@ -434,7 +436,7 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
 
             let document = Html::parse_document(document_text.as_str());
             let selector =
-                Selector::parse(r#"div.page-tags a"#).expect("Hardcoded selector should not fail.");
+                Selector::parse(r#"div.page-tags a"#).expect("Hardcoded selector should not fail");
             let tags: Vec<_> = document
                 .select(&selector)
                 .map(|a| {
@@ -443,17 +445,17 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
                         .iter()
                         .enumerate()
                         .find(|(_, tag)| **tag == tag_string)
-                        .expect("All tags should be known by this point.")
+                        .expect("All tags should be known by this point")
                         .0
                         .try_into()
-                        .expect("There should never be more tags than a u16.")
+                        .expect("There should never be more tags than a u16")
                 })
                 .collect();
 
             article.tags = tags;
             article.page_id = page_id;
 
-            let text = match make_vote_request(page_id, &client) {
+            let text = match make_vote_request(&client, page_id) {
                 Ok(text) => text,
                 Err(e) => panic!("Multi-retry: {:?}", e),
             };
@@ -467,25 +469,26 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
     });
 }
 
-fn make_vote_request(page_id: u64, client: &Client) -> Result<String, ScrapeError> {
+/// Request the vote records for a page
+fn make_vote_request(client: &Client, page_id: u64) -> Result<String, ScrapeError> {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         "Content-Type",
         "application/x-www-form-urlencoded; charset=UTF-8"
             .parse()
-            .expect("Hardcoded header should be valid."),
+            .expect("Hardcoded header should be valid"),
     );
     headers.insert(
         "user-agent",
         "Mozilla/5.0"
             .parse()
-            .expect("Hardcoded header shoud be valid."),
+            .expect("Hardcoded header shoud be valid"),
     );
     headers.insert(
         "Cookie",
         format!("wikidot_token7={}", WIKIDOT_TOKEN)
             .parse()
-            .expect("Predictable header should be valid."),
+            .expect("Predictable header should be valid"),
     );
 
     let data = format!(
@@ -513,8 +516,8 @@ fn make_vote_request(page_id: u64, client: &Client) -> Result<String, ScrapeErro
             }
             Err(e) => {
                 if retries >= MAX_RETRIES {
-                    println!("\x1b[93mError\x1b[0m: {:?}", e);
-                    panic!("558");
+                    println!("{}Multi-retry error: {:?}", SCRAPER_HEADING, e);
+                    panic!();
                 }
                 retries += 1;
             }
@@ -524,24 +527,24 @@ fn make_vote_request(page_id: u64, client: &Client) -> Result<String, ScrapeErro
     Ok(text)
 }
 
+/// Parse an article page, and tell the main thread about all the users in it
 fn update_article(
     text: String,
     main_tx: &Sender<ThreadResponse>,
     article: &mut Article,
 ) -> Result<(), ScrapeError> {
     for reg_match in USER_PATTERN.captures_iter(text.as_str()) {
-        // Tell the main thread about this user
         let user_id = reg_match
             .get(1)
-            .expect("UNEX; uid match")
+            .expect("User id should match")
             .as_str()
             .parse()
-            .expect("User id should be representable as u64.");
-        let url = String::from(reg_match.get(2).expect("UNEX; url match").as_str());
-        let name = String::from(reg_match.get(3).expect("UNEX; name match").as_str());
+            .expect("User id should be representable as u64");
+        let url = String::from(reg_match.get(2).expect("User URL should match").as_str());
+        let name = String::from(reg_match.get(3).expect("User name should match").as_str());
         main_tx.send(ThreadResponse::UserInfo(User { user_id, url, name }))?;
 
-        let vote = match reg_match.get(4).expect("UNEX; vote match").as_str() {
+        let vote = match reg_match.get(4).expect("User vote should match").as_str() {
             "+" => 1,
             "-" => -1,
             _ => unreachable!(),
@@ -572,10 +575,10 @@ mod tests {
         let scraper = Scraper::new();
 
         let outputs = OutputFiles {
-            article_output: ARTICLE_OUTPUT,
-            tags_output: TAGS_OUTPUT,
-            users_output: USERS_OUTPUT,
-            votes_output: VOTES_OUTPUT,
+            article_output: String::from(ARTICLE_OUTPUT),
+            tags_output: String::from(TAGS_OUTPUT),
+            users_output: String::from(USERS_OUTPUT),
+            votes_output: String::from(VOTES_OUTPUT),
         };
 
         match scraper.scrape(8, vec!["hub"], outputs) {

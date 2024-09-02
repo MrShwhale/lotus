@@ -2,10 +2,29 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::mpsc::{RecvError, SendError};
 
+#[derive(Clone)]
+pub struct RawPointerWrapper {
+    pub raw: *mut Article,
+}
+
+/// Thanks to <https://cryptical.xyz/rust/unsafe> for this idea/code.
+/// I worship at your altar, Özgün Özerk.
+impl RawPointerWrapper {
+    /// Get a mutable reference to the pointer
+    /// # Safety
+    /// The caller must be sure that this is not being referenced by multiple things, especially
+    /// across threads
+    pub unsafe fn get_mut_ptr(&self) -> &mut Article {
+        &mut *self.raw
+    }
+}
+
+unsafe impl Send for RawPointerWrapper {}
+
 pub enum ThreadResponse {
-    /// A request to a thread for an article to be scraped
+    /// A message to a thread for an article to be scraped
     ArticleResponse(RawPointerWrapper),
-    /// A response from a thread that the requested article has been scraped
+    /// A message from a thread that it is ready for an article
     ArticleRequest(usize),
     /// Request to a thread to stop scraping things
     EndRequest,
@@ -63,23 +82,6 @@ impl Debug for ScrapeError {
         write!(f, "{}", message)
     }
 }
-
-#[derive(Clone)]
-pub struct RawPointerWrapper {
-    pub raw: *mut Article,
-}
-
-impl RawPointerWrapper {
-    // Get a mutable reference to the pointer
-    // # Safety
-    // The caller must be sure that this is not being referenced by multiple things, especially
-    // across threads
-    pub unsafe fn get_mut_ptr(&self) -> &mut Article {
-        &mut *self.raw
-    }
-}
-
-unsafe impl Send for RawPointerWrapper {}
 
 /// Holds basic information about an article on the wiki
 #[derive(Debug, Hash, Serialize, Deserialize)]
@@ -157,23 +159,6 @@ mod tests {
     }
 
     #[test]
-    fn partial_equality() {
-        let user_1 = User {
-            name: String::from("Shark Lover"),
-            url: String::from("shark-lover"),
-            user_id: 1,
-        };
-
-        let user_2 = User {
-            name: String::from("Whale Lover"),
-            url: String::from("shark-lover"),
-            user_id: 1,
-        };
-
-        assert!(user_1 == user_2);
-    }
-
-    #[test]
     #[should_panic]
     fn partial_inequality() {
         let user_1 = User {
@@ -186,6 +171,23 @@ mod tests {
             name: String::from("Shark Lover"),
             url: String::from("shark-lover"),
             user_id: 2,
+        };
+
+        assert!(user_1 == user_2);
+    }
+
+    #[test]
+    fn partial_equality() {
+        let user_1 = User {
+            name: String::from("Shark Lover"),
+            url: String::from("shark-lover"),
+            user_id: 1,
+        };
+
+        let user_2 = User {
+            name: String::from("Whale Lover"),
+            url: String::from("shark-lover"),
+            user_id: 1,
         };
 
         assert!(user_1 == user_2);
