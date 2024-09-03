@@ -15,30 +15,48 @@ const VOTES_OUTPUT: &str = formatcp!("{}/votes.parquet", OUTPUT_DIR);
 use criterion::{criterion_group, criterion_main, Criterion};
 pub fn criterion_benchmark(c: &mut Criterion) {
     let options = RecommenderOptions::new()
-        .with_articles_file(&ARTICLE_OUTPUT)
-        .with_users_file(&USERS_OUTPUT)
-        .with_votes_file(&VOTES_OUTPUT)
-        .with_tags_file(&TAGS_OUTPUT);
+        .with_articles_file(ARTICLE_OUTPUT.into())
+        .with_users_file(USERS_OUTPUT.into())
+        .with_votes_file(VOTES_OUTPUT.into())
+        .with_tags_file(TAGS_OUTPUT.into());
     let recommender = Recommender::new_with_options(&options).unwrap();
 
     let mut group = c.benchmark_group("recommender");
-    // Configure Criterion.rs to detect smaller differences and increase sample size to improve
-    // precision and counteract the resulting noise.
     group.significance_level(0.1).sample_size(100);
     group.bench_function("get basic recommendation", |b| {
         b.iter(|| {
-            recommender.get_recommendations_by_uid(black_box(7904845), Vec::new(), Vec::new())
+            recommender.get_recommendations_by_uid(
+                black_box(7904845),
+                black_box(Vec::new()),
+                black_box(Vec::new()),
+            )
         })
     });
     group.bench_function("get tag-restricted recommendation", |b| {
-        b.iter(|| recommender.get_recommendations_by_uid(black_box(7904845), vec![734], Vec::new()))
+        b.iter(|| {
+            recommender.get_recommendations_by_uid(
+                black_box(7904845),
+                black_box(vec![734]),
+                black_box(Vec::new()),
+            )
+        })
     });
     group.bench_function("get pid-restricted recommendation", |b| {
-        b.iter(|| recommender.get_recommendations_by_uid(black_box(7904845), Vec::new(), vec![734]))
+        b.iter(|| {
+            recommender.get_recommendations_by_uid(
+                black_box(7904845),
+                black_box(Vec::new()),
+                black_box(vec![2528233]),
+            )
+        })
     });
     group.bench_function("get tag/pid-restricted recommendation", |b| {
         b.iter(|| {
-            recommender.get_recommendations_by_uid(black_box(7904845), vec![734], vec![25282833])
+            recommender.get_recommendations_by_uid(
+                black_box(7904845),
+                black_box(vec![734]),
+                black_box(vec![25282833]),
+            )
         })
     });
     group.finish();

@@ -7,25 +7,36 @@ use polars::{
 };
 use polars_core::utils::Container;
 use polars_lazy::{dsl::col, prelude::*};
-use recommender_types::*;
 use std::fs::File;
 
+pub use recommender_types::RecommenderError;
 pub use recommender_types::RecommenderOptions;
 
+/// Represents the recommendation system
 pub struct Recommender {
+    /// Holds the values of a non-vote in the normalized rating frame, mapping String versions of
+    /// the uid to the floating point value
     middle_norms: PlHashMap<String, f64>,
+    /// Holds pages and the info about them (name, pid, tags)
     page_frame: DataFrame,
+    /// Maps page ids to index in the page frame
     page_map: PlHashMap<u64, usize>,
+    /// Holds uids (column names) against pids (first column) with the intersection being the
+    /// rating given by a user to a page
     rating_frame: LazyFrame,
+    /// Holds the list of tags, implicitly against tag id (index)
     tags_frame: DataFrame,
+    /// Holds users and the info about them (name, url, uid)
+    /// Sorted by name, ascending
     user_frame: DataFrame,
+    /// The number of similar users' ratings to account for when making a recommendation
     users_to_consider: u32,
 }
 
+/// Heading to put before log messages from the recommender
 static RECOMENDER_HEADING: &str = "[RECOMMENDER] ";
 
 // TODO this WHOLE FILE needs error handling
-// Concurrent LazyFrame collection did not have measurable benefits
 impl Recommender {
     /// Creates a new recommender.
     /// Uses the default recommender settings.
@@ -36,18 +47,17 @@ impl Recommender {
 
     /// Creates a new recommender with the provided settings
     pub fn new_with_options(options: &RecommenderOptions) -> Result<Recommender, RecommenderError> {
-        let page_frame = set_up_page_frame(options.articles_file)?;
-        let user_frame = set_up_user_frame(options.users_file)?;
-        let rating_frame = set_up_rating_frame(options.votes_file)?;
-        // CONS storing as a Series instead of Dataframe
-        let tags_frame = set_up_tags_frame(options.tags_file)?;
+        let page_frame = set_up_page_frame(options.get_articles_file())?;
+        let user_frame = set_up_user_frame(options.get_users_file())?;
+        let rating_frame = set_up_rating_frame(options.get_votes_file())?;
+        let tags_frame = set_up_tags_frame(options.get_tags_file())?;
 
         // Create a map of page ids to indicies here
         // This means that the page_frame ordering should NEVER be changed without also changing this map
         let mut page_map = PlHashMap::with_capacity(page_frame.len());
         for (i, pid) in page_frame
             .column("pid")
-            .expect("Hardcoded column name.")
+            .expect("Hardcoded column name")
             .iter()
             .enumerate()
         {
@@ -60,19 +70,19 @@ impl Recommender {
             }
         }
 
-        // i8 values are used for minimizing memory, cast them into usable f64
+        // i8 values are used for minimizing memory, f64 must be used for recommendations
         let mut casts = PlHashMap::new();
         casts.insert("rating", DataType::Float64);
         let rating_frame = rating_frame.cast(casts, true);
         eprintln!("{}Frames made", RECOMENDER_HEADING);
 
-        // OPT this could probably be optimized
         // Count votes from each user
         let selected_users = rating_frame
             .clone()
             .group_by(["uid"])
             .agg([col("rating").count().alias("rating_count")])
-            .filter(col("rating_count").gt_eq(lit(options.min_votes)))
+            .filter(col("rating_count").gt_eq(lit(options.get_min_votes())))
+            // Concurrent LazyFrame collection did not have measurable benefits, here or anywhere
             .collect()?;
 
         let rating_frame =
@@ -104,7 +114,7 @@ impl Recommender {
             page_map,
             tags_frame,
             user_frame,
-            users_to_consider: options.users_to_consider,
+            users_to_consider: options.get_users_to_consider(),
         };
 
         recommender.normalize_rating_frame()?;
@@ -113,7 +123,7 @@ impl Recommender {
         Ok(recommender)
     }
 
-    // OPT This could be sped up with in-place
+    /// Center and normalize each column of the rating frame
     fn normalize_rating_frame(&mut self) -> Result<(), RecommenderError> {
         let mut frame = self.rating_frame.clone().collect()?;
         let mut z_vec = Vec::with_capacity(frame.width());
@@ -133,12 +143,9 @@ impl Recommender {
         let normalized = all_but_pid.clone() / all_but_pid.clone().pow(2).sum().sqrt();
         let frame = l_frame.select([col("pid"), normalized]).collect()?;
 
-        // Normalize each non-pid column in-place
-        // OPT unsafe access mutable columns since the lengths are not changing
-        // Then modify in place
-        // unsafe {
-        //     frame.get_columns_mut().into_par_iter().for_each(|column| normalize_column(column));
-        // };
+        // Naiive in-place normalization was not found to be faster.
+        // Multithreaded unsafe in-place normalization may be faster, but was deemed unneeded due
+        // to the speed of the code.
 
         let first = match frame.get(0) {
             Some(row) => row,
@@ -146,13 +153,12 @@ impl Recommender {
         };
 
         for (i, name) in frame.get_column_names().iter().skip(1).enumerate() {
-            // We can index at i + 1 since we skipped 1 earlier
+            // ndex at i + 1 due to the .skip(1)
             let value = match first[i + 1] {
                 AnyValue::Float64(val) => val,
                 _ => unreachable!(),
             };
 
-            // This is used later to see if users have voted on a page or not
             self.middle_norms.insert(String::from(*name), value);
         }
 
@@ -166,11 +172,15 @@ impl Recommender {
     /// Returns the Series representing the given user using the page dataframe
     pub fn get_user_by_username(&self, username: &str) -> Result<Vec<AnyValue>, RecommenderError> {
         eprintln!("{}Searching for user: {}", RECOMENDER_HEADING, username);
-        // OPT this is not a hot function, though this could likely be improved with concurrency or
-        // sorting. This is not done in case user order is later needed to be kept.
         let names = self.user_frame.column("name")?;
-        let mut index = 0;
-        loop {
+
+        let mut index;
+        let mut low = 0;
+        let mut high = names.len() - 1;
+
+        while low <= high {
+            index = low + (high - low) / 2;
+
             let extracted = match names.get(index)? {
                 AnyValue::String(value) => value,
                 _ => unreachable!(),
@@ -178,30 +188,34 @@ impl Recommender {
 
             if extracted == username {
                 eprintln!("{}User found at position {}", RECOMENDER_HEADING, index);
-                break;
+                return match self.user_frame.get(index) {
+                    Some(value) => Ok(value),
+                    None => unreachable!(),
+                };
+            } else if extracted > username {
+                high = index - 1;
+            } else {
+                low = index + 1;
             }
-
-            index += 1;
         }
 
-        match self.user_frame.get(index) {
-            Some(value) => Ok(value),
-            None => Err(RecommenderError::Bounds),
-        }
+        eprintln!("{}User not found", RECOMENDER_HEADING);
+
+        Err(RecommenderError::Bounds)
     }
 
-    // Returns the Series representing the given page using the page dataframe
+    /// Returns the Series representing the given page using the page dataframe
     pub fn get_page_by_pid(&self, pid: u64) -> Result<Vec<AnyValue>, RecommenderError> {
         match self.page_map.get(&pid) {
             Some(index) => Ok(self
                 .page_frame
                 .get(*index)
-                .expect("Recorded index should always be in bounds.")),
+                .expect("Recorded index should always be in bounds")),
             None => Err(RecommenderError::Bounds),
         }
     }
 
-    // Return every page ordered by how highly they are recommended
+    /// Return every page ordered by how highly they are recommended
     pub fn get_recommendations_by_uid(
         &self,
         uid: u64,
@@ -252,39 +266,7 @@ impl Recommender {
         recommendations.insert_column(2, page_weights)?;
 
         if !required_tags.is_empty() {
-            let req_tag_set: PlHashSet<_> = required_tags.into_iter().collect();
-
-            // OPT this is a little slow
-            // Create a Boolean Series which contains tag bans
-            let mask: Series = recommendations
-                .column("pid")
-                .unwrap()
-                .iter()
-                .map(|pid| {
-                    let pid = match pid {
-                        AnyValue::UInt64(value) => value,
-                        _ => unreachable!(),
-                    };
-                    let page = self.get_page_by_pid(pid).unwrap();
-                    let tag_list = match &page[3] {
-                        AnyValue::List(value) => value,
-                        _ => unreachable!(),
-                    };
-
-                    // Find page tags from pid
-                    let page_tags: PlHashSet<_> = tag_list
-                        .iter()
-                        .map(|value| match value {
-                            AnyValue::UInt16(int_val) => int_val,
-                            _ => unreachable!(),
-                        })
-                        .collect();
-
-                    page_tags.is_superset(&req_tag_set)
-                })
-                .collect();
-
-            recommendations = recommendations.filter(mask.bool()?)?;
+            recommendations = self.filter_by_tags(&mut recommendations, required_tags)?
         }
 
         let recommendations = recommendations.lazy().filter(ignored_pages.not());
@@ -295,7 +277,46 @@ impl Recommender {
         ))
     }
 
-    // Return a vector which can be used in a select on the rating frame to create page weights
+    fn filter_by_tags(
+        &self,
+        recommendations: &mut DataFrame,
+        required_tags: Vec<u16>,
+    ) -> Result<DataFrame, RecommenderError> {
+        let req_tag_set: PlHashSet<_> = required_tags.into_iter().collect();
+
+        // Create a Boolean Series which contains tag bans
+        let mask: Series = recommendations
+            .column("pid")
+            .expect("pid column should always exist")
+            .iter()
+            .map(|pid| {
+                let pid = match pid {
+                    AnyValue::UInt64(value) => value,
+                    _ => unreachable!(),
+                };
+                let page = self.get_page_by_pid(pid).expect("page should always exist");
+                let tag_list = match &page[3] {
+                    AnyValue::List(value) => value,
+                    _ => unreachable!(),
+                };
+
+                // Find page tags from pid
+                let page_tags: PlHashSet<_> = tag_list
+                    .iter()
+                    .map(|value| match value {
+                        AnyValue::UInt16(int_val) => int_val,
+                        _ => unreachable!(),
+                    })
+                    .collect();
+
+                page_tags.is_superset(&req_tag_set)
+            })
+            .collect();
+
+        Ok(recommendations.filter(mask.bool()?)?)
+    }
+
+    /// Return a vector which can be used in a select on the rating frame to create page weights
     fn get_similarity_selector(&self, uid: u64) -> Result<Vec<Expr>, RecommenderError> {
         let user_similarity = self.get_user_similarity(uid)?;
         let user_similarity = user_similarity.sort(
@@ -303,7 +324,9 @@ impl Recommender {
             SortMultipleOptions::new().with_order_descending(true),
         );
 
-        // Drop all users which have a similarity of about 1
+        // Drop all users which have a similarity of 1
+        // These users provide literally nothing (since everything they would suggest has already
+        // been read by the user)
         let user_similarity = user_similarity.filter(col("similarity").lt(lit(0.999f64)));
 
         // Get the most similar non-exact-copy users
@@ -380,7 +403,7 @@ impl Recommender {
             .map(|a| {
                 selected
                     .dot(a)
-                    .expect("Series of the same DF should have the same dimensions.")
+                    .expect("Series of the same DF should have the same dimensions")
             })
             .collect();
         let similarity = similarity.with_name("similarity");
@@ -388,12 +411,8 @@ impl Recommender {
     }
 
     pub fn get_tag_by_id(&self, index: u16) -> Option<String> {
-        // eprintln!("{}Searching for tag with id: {}", RECOMENDER_HEADING, index);
         match self.tags_frame.get(index.into())?.first()? {
-            AnyValue::String(value) => {
-                // eprintln!("{}Tag with id {} is {}", RECOMENDER_HEADING, index, *value);
-                Some(String::from(*value))
-            }
+            AnyValue::String(value) => Some(String::from(*value)),
             _ => unreachable!(),
         }
     }
@@ -401,9 +420,9 @@ impl Recommender {
     pub fn get_tags(&self) -> Vec<&str> {
         self.tags_frame
             .column("tag")
-            .unwrap()
+            .expect("tag column should always exist")
             .str()
-            .unwrap()
+            .expect("ChunkedArray should always be str-able")
             .into_no_null_iter()
             .collect()
     }
@@ -411,7 +430,10 @@ impl Recommender {
 
 fn set_up_user_frame(user_file: &str) -> Result<DataFrame, RecommenderError> {
     let file = File::open(user_file)?;
-    let user_df = ParquetReader::new(file).finish()?;
+    let mut user_df = ParquetReader::new(file).finish()?;
+
+    // Sort for faster searching
+    user_df.sort_in_place(["name"], SortMultipleOptions::new())?;
 
     Ok(user_df)
 }
@@ -449,39 +471,30 @@ fn set_up_tags_frame(tags_file: &str) -> Result<DataFrame, RecommenderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use const_format::formatcp;
-    // Directory where output files can be found
-    const OUTPUT_DIR: &str = "../output";
-
-    // Files to save scraped data to
-    const ARTICLE_OUTPUT: &str = formatcp!("{}/articles.parquet", OUTPUT_DIR);
-    const TAGS_OUTPUT: &str = formatcp!("{}/tags.parquet", OUTPUT_DIR);
-    const USERS_OUTPUT: &str = formatcp!("{}/users.parquet", OUTPUT_DIR);
-    const VOTES_OUTPUT: &str = formatcp!("{}/votes.parquet", OUTPUT_DIR);
 
     #[test]
     fn create_recommender() {
-        Recommender::new().unwrap();
+        let options = get_test_options();
+        Recommender::new_with_options(&options).expect("Recommender not created");
     }
+
+    // Directory where output files can be found
+    const OUTPUT_DIR: &str = "../output";
 
     #[test]
     fn get_recommendation() {
-        let options = RecommenderOptions::new()
-            .with_articles_file(&ARTICLE_OUTPUT)
-            .with_users_file(&USERS_OUTPUT)
-            .with_votes_file(&VOTES_OUTPUT)
-            .with_tags_file(&TAGS_OUTPUT)
-            // Users limited so that it runs faster
-            .with_min_votes(100);
+        let options = get_test_options();
 
         let rec = Recommender::new_with_options(&options).expect("Recommender not created");
 
-        let rating_frame = set_up_rating_frame(options.votes_file)
+        let rating_frame = set_up_rating_frame(options.get_votes_file())
             .expect("Ratings not read")
             .collect()
             .expect("Ratings collected");
 
-        let column = match rating_frame.get(0).expect("Row found")[1] {
+        println!("{:?}", rating_frame.get(0).expect("Row not found"));
+
+        let column = match rating_frame.get(0).expect("Row not found")[1] {
             AnyValue::UInt64(value) => value,
             _ => unreachable!(),
         };
@@ -490,5 +503,20 @@ mod tests {
             .expect("Recommendation not made")
             .collect()
             .expect("Not collected");
+    }
+
+    fn get_test_options() -> RecommenderOptions {
+        let article_output = format!("{}/articles.parquet", OUTPUT_DIR);
+        let tags_output = format!("{}/tags.parquet", OUTPUT_DIR);
+        let users_output = format!("{}/users.parquet", OUTPUT_DIR);
+        let votes_output = format!("{}/votes.parquet", OUTPUT_DIR);
+
+        RecommenderOptions::new()
+            .with_articles_file(article_output)
+            .with_users_file(users_output)
+            .with_votes_file(votes_output)
+            .with_tags_file(tags_output)
+            // Users limited so that it runs faster
+            .with_min_votes(100)
     }
 }

@@ -13,14 +13,13 @@ const VOTES_OUTPUT: &str = formatcp!("{}/votes.parquet", OUTPUT_DIR);
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("recommender");
-    // Configure Criterion.rs to detect smaller differences and increase sample size to improve
-    // precision and counteract the resulting noise.
+    // Sample size is heavily limited due to length of creating a single instance
     group.significance_level(0.1).sample_size(10);
     let options = RecommenderOptions::new()
-        .with_articles_file(&ARTICLE_OUTPUT)
-        .with_users_file(&USERS_OUTPUT)
-        .with_votes_file(&VOTES_OUTPUT)
-        .with_tags_file(&TAGS_OUTPUT);
+        .with_articles_file(ARTICLE_OUTPUT.into())
+        .with_users_file(USERS_OUTPUT.into())
+        .with_votes_file(VOTES_OUTPUT.into())
+        .with_tags_file(TAGS_OUTPUT.into());
     group.bench_function("recommender default", |b| {
         b.iter(|| black_box(Recommender::new_with_options(black_box(&options))))
     });

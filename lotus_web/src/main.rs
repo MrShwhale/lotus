@@ -14,7 +14,7 @@ async fn main() {
         .expect("Error starting listener");
     eprintln!("{}Web server up!", SERVER_HEADING);
 
-    // Wait until after the listener is for sure up to set up the recommender
+    // Wait until after the listener is actually up to set up the recommender
     lazy_static::initialize(&server::RECOMMENDER);
     axum::serve(listener, app).await.expect("Error while serving pages");
 }

@@ -1,4 +1,7 @@
-use crate::{recommender::Recommender, SERVER_HEADING};
+use crate::{
+    recommender::{Recommender, RecommenderError},
+    SERVER_HEADING,
+};
 use askama_axum::Template;
 use axum;
 use lazy_static::lazy_static;
@@ -9,7 +12,7 @@ use std::collections::HashMap;
 use urlencoding;
 
 lazy_static! {
-    pub static ref RECOMMENDER: Recommender = Recommender::new().unwrap();
+    pub static ref RECOMMENDER: Recommender = Recommender::new().expect("Recommender not created");
 }
 
 #[derive(Serialize)]
@@ -76,6 +79,8 @@ pub async fn get_rec(
         Vec::new()
     };
 
+    eprintln!("{}Tags: {:?}", SERVER_HEADING, tags);
+
     let bans: Vec<u64> = if let Some(ban_string) = ban_param {
         urlencoding::decode(ban_string)
             .unwrap()
@@ -88,19 +93,15 @@ pub async fn get_rec(
 
     eprintln!("{}Bans: {:?}", SERVER_HEADING, bans);
 
-    let recs = match RECOMMENDER.get_recommendations_by_uid(uid, tags, bans) {
-        Ok(lf) => lf.collect(),
-        Err(e) => {
-            eprintln!("{:?}", e);
-            panic!("This shouldn't happen");
-        }
-    };
-
-    let recs = match recs {
+    let recs = match || -> Result<_, RecommenderError> {
+        Ok(RECOMMENDER
+            .get_recommendations_by_uid(uid, tags, bans)?
+            .collect()?)
+    }() {
         Ok(df) => df,
         Err(e) => {
-            eprintln!("{:?}", e);
-            panic!("This shouldn't happen");
+            eprintln!("{}Pass on error from recommender: {:?}", SERVER_HEADING, e);
+            return String::from(r#"{"type":"error","code":"RECOMMENDER_ERROR"}"#);
         }
     };
 
@@ -146,8 +147,10 @@ fn recs_to_string(full_recs: DataFrame) -> String {
                     },
                 },
                 Err(e) => {
-                    eprintln!("{:?}", e);
-                    panic!("This shouldn't happen");
+                    panic!(
+                        "{}Page in recommender but not pages list: {:?}",
+                        SERVER_HEADING, e
+                    );
                 }
             },
         )
