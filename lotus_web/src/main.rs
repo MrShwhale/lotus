@@ -3,7 +3,7 @@ use lotus_web::{
     recommender::{Recommender, RecommenderOptions},
     server, SERVER_HEADING,
 };
-use std::{env, sync::Arc};
+use std::{env, process, sync::Arc};
 
 #[tokio::main]
 async fn main() {
@@ -66,7 +66,7 @@ async fn main() {
                     "Unknown command line option: {}.\nRun with --help (or -h) for valid commands.",
                     other
                 );
-                return;
+                process::exit(1);
             }
         };
 
@@ -80,7 +80,7 @@ async fn main() {
                 "{}Recommender startup failed with error: {:?}",
                 SERVER_HEADING, e
             );
-            return;
+            process::exit(1);
         }
     };
 

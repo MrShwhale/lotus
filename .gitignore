@@ -11,3 +11,4 @@ Cargo.lock
 # Project specific
 /output_backup
 output_backup.zip
+/logs
