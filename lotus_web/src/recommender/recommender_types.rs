@@ -32,7 +32,7 @@ impl From<io::Error> for RecommenderError {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RecommenderOptions {
     /// Minimum number of votes to consider a users opinion
     /// Lowering this increases the amount of memory and time needed to get recs

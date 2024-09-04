@@ -3,17 +3,12 @@ use crate::{
     SERVER_HEADING,
 };
 use askama_axum::Template;
-use axum;
-use lazy_static::lazy_static;
+use axum::{self, extract::State};
 use polars::prelude::*;
 use serde::Serialize;
 use serde_json;
 use std::collections::HashMap;
 use urlencoding;
-
-lazy_static! {
-    pub static ref RECOMMENDER: Recommender = Recommender::new().expect("Recommender not created");
-}
 
 #[derive(Serialize)]
 struct Recommendation {
@@ -30,8 +25,8 @@ pub struct RootTemplate {
 }
 
 /// Display the homepage
-pub async fn root() -> RootTemplate {
-    let tags = RECOMMENDER.get_tags();
+pub async fn root(State(recommender): State<Arc<Recommender>>) -> RootTemplate {
+    let tags = recommender.get_tags();
     let tags = serde_json::to_string(&tags).expect("");
 
     RootTemplate { tags }
@@ -39,6 +34,7 @@ pub async fn root() -> RootTemplate {
 
 /// Returns a list of recommendations in JSON format with the given params
 pub async fn get_rec(
+    State(recommender): State<Arc<Recommender>>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> String {
     eprintln!(
@@ -53,7 +49,7 @@ pub async fn get_rec(
     // Check if the uid exists
     let uid: u64 = if let Some(user_string) = user_param {
         // Check if this a name
-        match RECOMMENDER.get_user_by_username(user_string) {
+        match recommender.get_user_by_username(user_string) {
             Ok(user) => match user[2] {
                 AnyValue::UInt64(uid) => uid,
                 _ => unreachable!(),
@@ -94,7 +90,7 @@ pub async fn get_rec(
     eprintln!("{}Bans: {:?}", SERVER_HEADING, bans);
 
     let recs = match || -> Result<_, RecommenderError> {
-        Ok(RECOMMENDER
+        Ok(recommender
             .get_recommendations_by_uid(uid, tags, bans)?
             .collect()?)
     }() {
@@ -107,10 +103,10 @@ pub async fn get_rec(
 
     let top_recs = recs.head(Some(500));
 
-    recs_to_string(top_recs)
+    recs_to_string(&recommender, top_recs)
 }
 
-fn recs_to_string(full_recs: DataFrame) -> String {
+fn recs_to_string(recommender: &Recommender, full_recs: DataFrame) -> String {
     let pages: Vec<_> = full_recs
         .column("pid")
         .expect("pid column should always exist")
@@ -118,7 +114,7 @@ fn recs_to_string(full_recs: DataFrame) -> String {
         .expect("pids should all be u64")
         .iter()
         .map(
-            |pid| match RECOMMENDER.get_page_by_pid(pid.expect("pids should all be Some")) {
+            |pid| match recommender.get_page_by_pid(pid.expect("pids should all be Some")) {
                 Ok(vec) => Recommendation {
                     name: match &vec[0] {
                         AnyValue::String(page_name) => String::from(*page_name),
@@ -138,7 +134,7 @@ fn recs_to_string(full_recs: DataFrame) -> String {
                             .expect("Tags should all be u16")
                             .iter()
                             .map(|tag| {
-                                RECOMMENDER
+                                recommender
                                     .get_tag_by_id(tag.expect("Tags should all be Some"))
                                     .unwrap()
                             })

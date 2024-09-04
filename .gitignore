@@ -9,6 +9,5 @@ Cargo.lock
 *.pdb
 
 # Project specific
-/output
 /output_backup
 output_backup.zip

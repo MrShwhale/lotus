@@ -36,7 +36,6 @@ pub struct Recommender {
 /// Heading to put before log messages from the recommender
 static RECOMENDER_HEADING: &str = "[RECOMMENDER] ";
 
-// TODO this WHOLE FILE needs error handling
 impl Recommender {
     /// Creates a new recommender.
     /// Uses the default recommender settings.
@@ -478,7 +477,6 @@ mod tests {
         Recommender::new_with_options(&options).expect("Recommender not created");
     }
 
-    // Directory where output files can be found
     const OUTPUT_DIR: &str = "../output";
 
     #[test]
