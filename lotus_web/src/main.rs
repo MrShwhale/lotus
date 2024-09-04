@@ -7,7 +7,6 @@ use std::{env, sync::Arc};
 
 #[tokio::main]
 async fn main() {
-    // Parse args
     let args: Vec<String> = env::args().collect();
 
     let mut options = RecommenderOptions::new();

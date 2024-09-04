@@ -21,7 +21,7 @@ use std::{
 };
 
 /// Number of times to try a url before giving up. In reality, urls may be tried more than this
-/// many times in rare circumstances.
+/// in rare circumstances.
 const MAX_RETRIES: u8 = 7;
 
 const WIKI_PREFIX: &str = "https://scp-wiki.wikidot.com/";
@@ -46,8 +46,8 @@ struct ScrapeInfo {
 pub struct Scraper {
     /// Maximum number of requests to send at once. Also the number of additional system threads to create
     max_concurrent_requests: u8,
-    /// Delay between requests in milliseconds. This happens once per thread, so for a "true" value
-    /// it should be divided by max_concurrent_requests. This is also an additional delay, not an exact one.
+    /// Delay between requests in milliseconds. This may have fluctuations due to
+    /// calculation time and retrying requests.
     download_delay: u64,
 }
 
@@ -56,6 +56,18 @@ impl Scraper {
         Scraper {
             max_concurrent_requests: 8,
             download_delay: 0,
+        }
+    }
+
+    pub fn new_with_options(max_concurrent_requests: u8, download_delay: u64) -> Scraper {
+        assert!(
+            max_concurrent_requests == 0,
+            "max_concurrent_requests must be more than 0!"
+        );
+
+        Scraper {
+            max_concurrent_requests,
+            download_delay: (download_delay * max_concurrent_requests as u64),
         }
     }
 
