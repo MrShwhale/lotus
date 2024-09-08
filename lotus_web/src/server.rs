@@ -27,8 +27,7 @@ pub struct RootTemplate {
 /// Display the homepage
 pub async fn root(State(recommender): State<Arc<Recommender>>) -> RootTemplate {
     let tags = recommender.get_tags();
-    let tags = serde_json::to_string(&tags).expect("");
-
+    let tags = serde_json::to_string(&tags).expect("Tags should always be serializable");
     RootTemplate { tags }
 }
 

@@ -10,7 +10,6 @@ const TAGS_OUTPUT: &str = formatcp!("{}/tags.parquet", OUTPUT_DIR);
 const USERS_OUTPUT: &str = formatcp!("{}/users.parquet", OUTPUT_DIR);
 const VOTES_OUTPUT: &str = formatcp!("{}/votes.parquet", OUTPUT_DIR);
 
-// CONS nonstatic lifetime
 #[derive(Clone, Debug)]
 pub struct OutputFiles {
     pub article_output: String,

@@ -1,0 +1,248 @@
+:root {
+    --main-bg-color: #000000;
+    --alt-bg-color: #333333;
+    --main-text-color: #BEBEBE;
+    --foreground-color: #CF0F0A;
+    --rec-border-color: #CF0F0A40;
+    --lotus-outline: #000000;
+    --muted-foreground-color: #9B4141;
+}
+
+body {
+    background: linear-gradient(to right, transparent, black 30%, black 70%, transparent),
+        url("./red_fractal_swirling_hd_trippy.jpg");
+    display: inline;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    background-position: center;
+}
+
+/*
+* JAdvice
+* Change red to be less bright (make current scrollbar color)
+*/
+
+.page-holder {
+    width: 50%;
+    margin: auto;
+}
+
+.header {
+    margin: auto;
+    display: block;
+}
+
+/* TODO offset to match lotus svg */
+.title {
+    position: relative;
+    text-align: center;
+    font-size: 200px;
+    font-family: "Poppins", system-ui;
+    font-weight: 800;
+    font-style: normal;
+    margin-top: -280px;
+    margin-bottom: 30px;
+    z-index: 2;
+    color: var(--main-text-color);
+    user-select: none;
+    cursor: inherit;
+}
+
+.search-bar-container {
+    display: flex;
+    margin: 0 auto;
+    border: 5px solid var(--foreground-color);
+    border-radius: 60px;
+    height: 58px;
+    /*TMP*/
+    min-width: 500px;
+}
+
+.input-box {
+    display: inline;
+    color: var(--main-text-color);
+    font-size: 30px;
+    font-family: "Hack", system-ui;
+    border: none;
+    background: none;
+    flex: 1;
+    margin-left: 20px;
+    min-width: 0;
+}
+
+.input-box:focus {
+    outline-width: 0;
+}
+
+#lotus-svg {
+    display: block;
+    position: relative;
+    margin: 0 auto 100px;
+    stroke: var(--lotus-outline);
+    fill: var(--alt-bg-color);
+    z-index: 1;
+}
+
+.searchbar-button {
+    display: inline;
+    background: none;
+    border: none;
+}
+
+.searchbar-svg {
+    display: inline;
+    stroke: var(--main-text-color);
+    fill: var(--main-text-color);
+}
+
+#search-button {
+    margin-right: 20px;
+    cursor: pointer;
+}
+
+#tag-select-button {
+    cursor: pointer;
+}
+
+.hidden {
+    visibility: hidden;
+}
+
+#rec-container-container {
+    margin-top: 5%;
+    border: 5px solid var(--foreground-color);
+    border-radius: 60px;
+    background: var(--rec-border-color);
+}
+
+#rec-container {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+    margin: 30px;
+    border: 5px solid var(--foreground-color);
+    border-radius: 60px;
+    background: var(--main-bg-color);
+}
+
+.rec {
+    display: flex;
+    gap: 30px;
+    border: none;
+    border-radius: 60px;
+    background: var(--alt-bg-color);
+    font-size: 36px;
+    font-family: "Poppins", system-ui;
+    font-weight: 600;
+    font-style: normal;
+    margin: 0 20px;
+    padding: 10px;
+}
+
+.rec-link {
+    font-style: normal;
+    color: var(--main-text-color);
+    text-decoration: none;
+}
+
+.rec-link:visited {
+    color: var(--muted-foreground-color);
+}
+
+.rec-link:hover {
+    color: var(--foreground-color);
+}
+
+.ban-button {
+    margin: auto 0;
+    background-image: url("./gray_circle.svg");
+    background-repeat: no-repeat;
+    width: 50px;
+    min-width: 50px;
+    height: 50px;
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+}
+
+.ban-button:hover {
+    background-image: url("./red_x.svg");
+}
+
+.popup {
+    position: relative;
+    top: -100px;
+    display: block;
+    visibility: hidden;
+    border: 5px solid var(--foreground-color);
+    border-radius: 60px;
+}
+
+.show {
+    visibility: visible;
+}
+
+#tags-popup {
+    background-color: var(--main-bg-color);
+    position: relative;
+    display: flex;
+    top: -535px;
+    border: 5px solid var(--foreground-color);
+    border-radius: 60px;
+    margin: 0 auto;
+    width: 80%;
+    height: 450px;
+    z-index: 3;
+}
+
+#tag-container {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-around;
+}
+
+#tags-popup-inner {
+    overflow-y: auto;
+    scrollbar-color: var(--foreground-color) var(--main-bg-color);
+}
+
+.scrollbar-rounder {
+    overflow: hidden;
+    border: 5px solid var(--foreground-color);
+    display: flex;
+    border-radius: 60px;
+    margin: 15px;
+}
+
+.popup-holder {
+    position: relative;
+    width: 100%;
+    height: 0;
+}
+
+.tag-header {
+    color: var(--main-text-color);
+    font-size: 30px;
+    font-family: "Hack", system-ui;
+    text-align: center;
+}
+
+.tag {
+    color: var(--main-text-color);
+    font-size: 18px;
+    font-family: "Hack", system-ui;
+    background-color: var(--alt-bg-color);
+    border-radius: 60px;
+    padding: 8px;
+    margin: 5px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.tag:hover {
+    color: var(--foreground-color);
+}
+
+.tag.selected-tag {
+    color: var(--muted-foreground-color);
+}

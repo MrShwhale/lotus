@@ -4,6 +4,7 @@ use lotus_web::{
     server, SERVER_HEADING,
 };
 use std::{env, process, sync::Arc};
+use tower_http::services::ServeDir;
 
 #[tokio::main]
 async fn main() {
@@ -86,11 +87,15 @@ async fn main() {
 
     eprintln!("{}Starting web server...", SERVER_HEADING);
 
+    // TODO add not found service
+    let serve_dir = ServeDir::new("lotus_web/web_files");
+
     let state = Arc::new(recommender);
 
     let app = Router::new()
         .route("/", get(server::root))
         .route("/rec", get(server::get_rec))
+        .nest_service("/files", serve_dir)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
