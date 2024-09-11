@@ -84,8 +84,15 @@ impl Recommender {
             // Concurrent LazyFrame collection did not have measurable benefits, here or anywhere
             .collect()?;
 
-        let rating_frame =
-            rating_frame.filter(col("uid").is_in(lit(selected_users["uid"].clone())));
+        let irrel_ignore = col("uid").is_in(lit(selected_users["uid"].clone()));
+
+        let user_frame = user_frame
+            .lazy()
+            .filter(irrel_ignore.clone())
+            .collect()
+            .unwrap();
+
+        let rating_frame = rating_frame.filter(irrel_ignore);
         eprintln!("{}Irrelevant users discarded", RECOMENDER_HEADING);
 
         let mut casts = PlHashMap::new();
@@ -423,6 +430,18 @@ impl Recommender {
             .str()
             .expect("ChunkedArray should always be str-able")
             .into_no_null_iter()
+            .collect()
+    }
+
+    pub fn get_users_list(&self) -> Vec<&str> {
+        self.user_frame
+            .column("name")
+            .unwrap()
+            .iter()
+            .map(|value| match value {
+                AnyValue::String(name) => name,
+                _ => panic!("These should all be strings"),
+            })
             .collect()
     }
 }

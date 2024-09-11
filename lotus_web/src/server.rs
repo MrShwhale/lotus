@@ -22,13 +22,18 @@ struct Recommendation {
 #[template(path = "index.html")]
 pub struct RootTemplate {
     tags: String,
+    usernames: String,
 }
 
 /// Display the homepage
 pub async fn root(State(recommender): State<Arc<Recommender>>) -> RootTemplate {
     let tags = recommender.get_tags();
     let tags = serde_json::to_string(&tags).expect("Tags should always be serializable");
-    RootTemplate { tags }
+
+    let usernames = recommender.get_users_list();
+    let usernames =
+        serde_json::to_string(&usernames).expect("Usernames should always be serializable");
+    RootTemplate { tags, usernames }
 }
 
 /// Returns a list of recommendations in JSON format with the given params
@@ -153,3 +158,5 @@ fn recs_to_string(recommender: &Recommender, full_recs: DataFrame) -> String {
 
     serde_json::to_string(&pages).expect("Page vec should be serializeable")
 }
+
+// TODO add name autocomplete

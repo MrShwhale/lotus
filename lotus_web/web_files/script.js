@@ -1,26 +1,61 @@
-// Locally stored array of the pids of banned pages
+const MAX_RESULTS = 5;
+const WIKI_PREFIX = "https://scp-wiki.wikidot.com/";
+
+let isRequesting = false;
+
 let bans = undefined;
 let tagStrings = [];
 
-// Setting up local storage
+// TODO store banned names for unban list
 if (typeof (Storage) !== "undefined") {
     // Put a placeholder value in if there are no existing bans
     if (!localStorage.getItem("bans")) {
         window.localStorage.setItem("bans", "[]");
     }
 
+    // TODO add ensuring that all these are valid pids, removing others
     bans = JSON.parse(window.localStorage.getItem("bans"));
-    console.log("bans: ", bans);
-} else {
-    console.log("No storage support...");
+}
+else {
+    console.log("No localStorage support. Bans will not be saved.");
 }
 
-let wikiPrefix = "https://scp-wiki.wikidot.com/";
-// Retrieves and displays recommendations for the given user with the given settings
-async function showRecs() {
-    console.log("Starting to request...");
+// Takes a value, array, start/end indicies (inclusive), and compare function
+// Returns the correct index to insert the value at, or -1 if start < end.
+// If the value is already in the list, inserts before the first existing value
+function binarySearchIndex(value, array, start, end, compare) {
+    let test = false;
+    let mid = -1;
 
-    console.log(document.getElementById("user-search").value);
+    while (start <= end) {
+        mid = Math.floor((end + start) / 2);
+
+        test = compare(value, array[mid]) <= 0;
+
+        if (test) {
+            end = mid - 1;
+        }
+        else {
+            start = mid + 1;
+        }
+    }
+
+    if (!test) {
+        mid += 1;
+    }
+
+    return mid;
+}
+
+// Retrieves and displays recommendations for the given user with the given settings
+// TODO add more rate limiting
+async function showRecs() {
+    if (isRequesting) {
+        console.log("Already requesting!")
+        return;
+    }
+
+    isRequesting = true;
 
     let username = document.getElementById("user-search").value;
     let url = window.location.href + "rec";
@@ -41,51 +76,103 @@ async function showRecs() {
         url = url.substring(0, url.length - 1);
     }
 
-    // TODO add a bunch of error-checking/pruning here
     if (bans.length > 0) {
         url += "&bans=";
         for (const ban of bans) {
+            // If this is not a valid int, ignore for now. It will be removed on reload
+            // Does not consider numbers too large to be pids
+            if (ban != Number.parseInt(ban)) {
+                continue;
+            }
+
             url += ban;
             url += "+"
         }
         url = url.substring(0, url.length - 1);
     }
 
-    console.log(url);
-
     try {
-        // let json = [{ "name": "Integrity Project", "url": "integrity-project", "tags": ["_licensebox", "director-aktus", "resurrection", "tale"] }, { "name": "Like We Were Ever Kindergarten Teachers to Start With", "url": "maria-jones-this-is-your-life", "tags": ["_licensebox", "doctor-bright", "doctor-light", "maria-jones", "resurrection", "tale"] }, { "name": "All This Wandering", "url": "but-some-time-we-cant-erase", "tags": ["_adult", "_licensebox", "maria-jones", "resurrection", "tale"] }, { "name": "I Was Not Magnificent", "url": "i-was-not-magnificent", "tags": ["_licensebox", "director-gillespie", "doctor-light", "doctor-roget", "resurrection", "rewritable", "tale"] }, { "name": "SCP-173", "url": "scp-173", "tags": ["_licensebox", "autonomous", "ectoentropic", "euclid", "featured", "hostile", "observational", "scp", "sculpture", "the-sculpture"] }, { "name": "Where Your Eyes Don't Go", "url": "where-your-eyes-don-t-go", "tags": ["_licensebox", "director-gillespie", "doctor-roget", "doctor-vang", "researcher-conwell", "researcher-rosen", "resurrection", "rewritable", "tale"] }, { "name": "wowwee go kill ursefl", "url": "wowwee-go-kill-ursefl", "tags": ["_licensebox", "are-we-cool-yet", "black-comedy", "comedy", "ruiz-duchamp", "tale"] }, { "name": "The Cool War", "url": "the-cool-war-hub", "tags": ["_licensebox", "_tale-hub", "are-we-cool-yet", "dr-wondertainment", "hub", "nobody"] }, { "name": "SCP-6001", "url": "scp-6001", "tags": ["6000", "_cc", "_licensebox", "anderson", "animal", "are-we-cool-yet", "children-of-the-night", "esoteric-class", "extradimensional", "feline", "global-occult-coalition", "hard-to-destroy-reptile", "manna-charitable-foundation", "marshall-carter-and-dark", "nameless", "nobody", "parawatch", "portal", "prometheus", "sapient", "scp", "serpents-hand", "the-sculpture", "wilsons-wildlife"] }, { "name": "SCP-082", "url": "scp-082", "tags": ["_licensebox", "alive", "euclid", "humanoid", "predatory", "sapient", "scp"] }, { "name": "The Cool Kids", "url": "the-cool-kids", "tags": ["_licensebox", "are-we-cool-yet", "comedy", "spy-fiction", "tale", "the-critic"] }, { "name": "Friendly Conversation", "url": "friendly-conversation", "tags": ["_licensebox", "bittersweet", "iris-thompson", "reviewers-spotlight", "slice-of-life", "tale"] }, { "name": "Kill the Feeling", "url": "kill-the-feeling", "tags": ["_licensebox", "bleak", "coldpostcon", "iris-thompson", "lgbtq", "tale"] }, { "name": "Moonlighting", "url": "moonlighting", "tags": ["_licensebox", "are-we-cool-yet", "eurtec", "global-occult-coalition", "prometheus", "silicon-nornir", "tale", "third-law"] }, { "name": "The Department of Humanoid Risk Assessment", "url": "humanoid-risk-assessment", "tags": ["_licensebox", "featured", "iris-thompson", "tale", "worldbuilding"] }, { "name": "Clef And Dimitri Hit The Road", "url": "clef-and-dimitri-hit-the-road", "tags": ["_licensebox", "agent-strelnikov", "agent-yoric", "co-authored", "comedy", "doctor-clef", "doctor-glass", "global-occult-coalition", "tale"] }, { "name": "Routine Psychological Evaluations By Dr Glass", "url": "routine-psychological-evaluations-by-dr-glass", "tags": ["_licensebox", "comedy", "doctor-bright", "doctor-clef", "doctor-gears", "doctor-glass", "doctor-kondraki", "doctor-rights", "slice-of-life", "tale"] }, { "name": "SCP-1000", "url": "scp-1000", "tags": ["1000", "_cc", "_licensebox", "alive", "children-of-the-night", "featured", "historical", "humanoid", "illustrated", "k-class-scenario", "keter", "sapient", "scp", "serpents-hand", "species", "uncontained"] }, { "name": "Penal Reform", "url": "penal-reform", "tags": ["_licensebox", "iris-thompson", "rainer-miller", "reviewers-spotlight", "slice-of-life", "tale"] }, { "name": "Onboarding", "url": "onboarding", "tags": ["_licensebox", "comedy", "iris-thompson", "rainer-miller", "slice-of-life", "tale"] }, { "name": "SCP-085", "url": "scp-085", "tags": ["_cc", "_licensebox", "artistic", "autonomous", "foundation-made", "humanoid", "inscription", "mobile", "safe", "sapient", "scp", "visual"] }, { "name": "Personal Log of Agent AA", "url": "log-of-agent-aa", "tags": ["_licensebox", "able", "cain", "first-person", "iris-thompson", "journal", "tale"] }, { "name": "Ouroboros", "url": "ouroboros", "tags": ["001-proposal", "_cc", "_licensebox", "hub", "splash"] }, { "name": "SCP-2343", "url": "scp-2343", "tags": ["_cc", "_licensebox", "_listpages", "biological", "humanoid", "keter", "meta", "prize-feature", "reality-bending", "sapient", "scp"] }, { "name": "Voices Carry: Part 1", "url": "voices-carry-part-1", "tags": ["_licensebox", "action", "featured", "global-occult-coalition", "iris-thompson", "last-hope", "military-fiction", "resurrection", "tale"] }, { "name": "We Need To Talk About Fifty-Five", "url": "we-need-to-talk-about-fifty-five", "tags": ["_licensebox", "marion-wheeler", "tale"] }, { "name": "Mobile Task Force Basic School: Induction Remarks", "url": "sunday-0600-mobile-task-force-central-training-facility", "tags": ["_licensebox", "angle-grinders", "lombardi", "military-fiction", "orientation", "tale"] }, { "name": "black white black white black white black white black white gray", "url": "black-white-black-white-black-white-black-white-black-white", "tags": ["_licensebox", "tale"] }, { "name": "SCP-4818", "url": "scp-4818", "tags": ["_licensebox", "euclid", "humanoid", "last-hope", "light", "sapient", "scp", "superhero"] }, { "name": "Excerpts From \"How To Survive When Reality Doesn't\", by Alto Clef", "url": "clef-excerpts", "tags": ["_licensebox", "cain", "doctor-clef", "tale"] }]
-
-        // TODO add loading screen here
-
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Response status: ${response.status}`);
-        }
-
-        json = await response.json();
-        console.log(json);
-
         document.getElementById("rec-container-container").classList.remove("hidden");
 
         let recommendationsHolder = document.getElementById("rec-container");
 
-        // Clear of previous recs
-        recommendationsHolder.innerHTML = ""
+        // Clear of previous recs/errors
+        recommendationsHolder.innerHTML = "";
+
+        let loadingElement = document.createElement("div");
+        loadingElement.classList.add("response-text");
+        loadingElement.innerHTML = "LOADING REQUESTS...";
+
+        recommendationsHolder.appendChild(loadingElement);
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            console.log(response);
+
+            recommendationsHolder.innerHTML = "";
+
+            let errorElement = document.createElement("div");
+            errorElement.classList.add("response-text");
+            errorElement.classList.add("error");
+            errorElement.innerHTML = `ERROR ${response.status}`;
+
+            let statusText = document.createElement("p");
+            statusText.classList.add("status-text");
+            statusText.innerHTML = response.statusText;
+
+            recommendationsHolder.appendChild(errorElement);
+            recommendationsHolder.appendChild(statusText);
+
+            isRequesting = false;
+            throw new Error(`Response status: ${response.status}`);
+        }
+
+        isRequesting = false;
+
+        json = await response.json();
+
+        recommendationsHolder.innerHTML = "";
+
+        if ('type' in json && json.type == "error") {
+            let errorElement = document.createElement("div");
+            errorElement.classList.add("response-text");
+            errorElement.classList.add("error");
+
+            let statusText = document.createElement("p");
+            statusText.classList.add("status-text");
+
+            switch (json.type) {
+                case "USER_PARSE_ERROR":
+                    errorElement.innerHTML = "WRONG USER FORMAT";
+                    statusText.innerHTML = "The username could not be loaded by the recommender.";
+                    break;
+                case "NO_USER":
+                    errorElement.innerHTML = "USER NOT FOUND";
+                    statusText.innerHTML = "A user by that name could not be found in the recommender. Have they voted enough times?";
+                    break;
+                case "RECOMMENDER_ERROR":
+                    errorElement.innerHTML = "RECOMMENDER ERROR";
+                    statusText.innerHTML = "Something went wrong with the recommendation process. Try again soon or contact an admin at wapatmore@gmail.com.";
+                    break;
+            }
+
+            recommendationsHolder.appendChild(errorElement);
+            recommendationsHolder.appendChild(statusText);
+
+            throw new Error(`Valid response with error: ${json.type}`);
+        }
 
         // Add starting dummy
         recommendationsHolder.appendChild(document.createElement("div"));
 
         function banId(id) {
-            console.log(`Banning: ${id}`);
-            return function ban(event) {
+            return (event) => {
                 event.target.parentNode.remove();
                 bans.push(id);
                 window.localStorage.setItem("bans", JSON.stringify(bans));
             }
         }
 
-        // TODO add error handling
         for (const page of json.slice(0, 30)) {
             const recHolder = document.createElement("div");
             const recLink = document.createElement("a");
@@ -93,7 +180,7 @@ async function showRecs() {
 
             recLink.innerHTML = `${page.name}`;
 
-            recLink.setAttribute("href", wikiPrefix + page.url);
+            recLink.setAttribute("href", WIKI_PREFIX + page.url);
             recLink.setAttribute("target", "_blank");
             recLink.classList.add("rec-link");
 
@@ -107,23 +194,23 @@ async function showRecs() {
             recommendationsHolder.appendChild(recHolder);
         }
 
-        // Add ending dummy
+        // Dummy element for functional flex formatting
         recommendationsHolder.appendChild(document.createElement("div"));
 
     } catch (error) {
         console.error(error.message);
     }
-
-    console.log("Done!");
 }
 
-document.getElementById("search-button").addEventListener('click', showRecs);
+document.getElementById("search-button").addEventListener('click', () => {
+    showRecs();
+});
 
 // Add everything to the tags element
 // CONS actually do this with templeting in the final
 let tagContainer = document.getElementById("tag-container");
 for (const tag of tags) {
-    let newTag = document.createElement("span");
+    let newTag = document.createElement("button");
     newTag.innerHTML = tag;
     newTag.classList.add("tag")
     tagContainer.appendChild(newTag);
@@ -149,7 +236,6 @@ function toggleTag(event) {
     // TODO Make sure this is consistent with other binary search (who cares?)
     let low = 0;
     let high = tagContainer.children.length - 1;
-    let mid = 0;
 
     // If this WAS selected, it shouldn't be anymore
     if (selected) {
@@ -161,31 +247,18 @@ function toggleTag(event) {
         high = tagStrings.length - 2;
     }
 
-    let test;
-    while (low <= high) {
-        mid = Math.floor((high + low) / 2);
+    function compareTagElements(tag1, tag2) {
+        let test = tag1.innerHTML.replace("-", "").replace("_", "").localeCompare(tag2.innerHTML.replace("-", "").replace("_", ""));
+        if (test == 0) {
+            return tag1.innerHTML.localeCompare(tag2.innerHTML);
+        }
 
-        let text = tagContainer.children[mid].innerHTML;
-        test = text.toString().replace(/^_+/, "") < event.target.innerHTML.replace(/^_+/, "");
-
-        if (text == event.target.innerHTML) {
-            console.log("ERROR: tag to place already found");
-            return;
-        }
-        else if (test) {
-            low = mid + 1;
-        }
-        else {
-            high = mid - 1;
-        }
+        return test;
     }
 
-    if (test) {
-        tagContainer.children[mid].insertAdjacentElement("afterend", event.target);
-    }
-    else {
-        tagContainer.children[mid].insertAdjacentElement("beforebegin", event.target);
-    }
+    let index = binarySearchIndex(event.target, tagContainer.children, low, high, compareTagElements);
+
+    tagContainer.children[index].insertAdjacentElement("beforebegin", event.target);
 }
 
 for (const tag of tagContainer.children) {
@@ -193,7 +266,163 @@ for (const tag of tagContainer.children) {
 }
 
 function toggleTagPopup() {
+    // Clear tag filters
+    document.getElementById("tag-search").value = "";
     document.getElementById("tags-popup").classList.toggle("hidden");
 }
 
 document.getElementById("tag-select-button").addEventListener('click', toggleTagPopup);
+
+let userSearchElement = document.getElementById("user-search");
+
+// TODO rewrite all of this to be not bad
+let acSelected = -1;
+
+function compareNames(name1, name2) {
+    return name1.localeCompare(name2, undefined, { "caseFirst": "upper" });
+}
+
+usernames.sort(compareNames);
+
+function closeAutocomplete() {
+    let acItems = document.getElementsByClassName("user-ac-holder");
+    for (let item of acItems) {
+        item.remove();
+    }
+}
+
+function autocomplete(event) {
+    let value = event.target.value;
+
+    closeAutocomplete();
+
+    if (!value) {
+        return false;
+    }
+
+    acSelected = -1;
+
+    let resultContainer = document.createElement("div");
+    resultContainer.setAttribute("id", event.target.id + "-ac-list");
+    resultContainer.classList.add("user-ac-holder");
+
+    event.target.parentNode.appendChild(resultContainer);
+
+    let ind = binarySearchIndex(value, usernames, 0, usernames.length - 1, compareNames);
+
+    for (let i = ind; i < ind + MAX_RESULTS; i++) {
+        let shared_substr = usernames[i].substr(0, value.length);
+
+        // Do not overflow into users not starting with shared_substr
+        if (shared_substr.toLowerCase() == value.toLowerCase()) {
+            break;
+        }
+
+        let result = document.createElement("div");
+
+        let shared = document.createElement("span");
+        shared.classList.add("user-ac-shared")
+        shared.innerHTML = shared_substr;
+
+        let other = document.createElement("span");
+        other.classList.add("user-ac-other")
+        other.innerHTML = usernames[i].substr(value.length);
+
+        result.appendChild(shared);
+        result.appendChild(other);
+
+        result.addEventListener("click", () => {
+            userSearchElement.value = usernames[i];
+            closeAutocomplete();
+        });
+
+        resultContainer.appendChild(result);
+    }
+}
+
+function handlePresses(event) {
+    let elementList = document.getElementById(event.target.id + "-ac-list");
+    if (!elementList) {
+        return;
+    }
+    else {
+        elementList = elementList.children;
+    }
+
+    // CONS changing this slightly to look more DRY
+    if (event.key == "ArrowUp" || (event.key == "Tab" && event.shiftKey)) {
+        event.preventDefault();
+        if (acSelected < 0) {
+            acSelected = elementList;
+        }
+        else {
+            elementList[acSelected].classList.remove("user-ac-selected");
+        }
+
+        acSelected--;
+        if (acSelected < 0) {
+            acSelected = elementList.length - 1;
+        }
+
+        elementList[acSelected].classList.add("user-ac-selected");
+    }
+    else if (event.key == "ArrowDown" || event.key == "Tab") {
+        event.preventDefault();
+        if (acSelected < 0) {
+            acSelected = -1;
+        }
+        else {
+            elementList[acSelected].classList.remove("user-ac-selected");
+        }
+
+        acSelected++;
+        if (acSelected >= elementList.length) {
+            acSelected = 0;
+        }
+
+        elementList[acSelected].classList.add("user-ac-selected");
+    }
+    else if (event.key == "Enter") {
+        if (acSelected > -1) {
+            elementList[acSelected].click();
+        }
+    }
+}
+
+userSearchElement.addEventListener("input", autocomplete);
+userSearchElement.addEventListener("keydown", handlePresses);
+
+document.addEventListener("click", (event) => {
+    closeAutocomplete(event.target);
+});
+
+
+document.addEventListener("keydown", (event) => {
+    if (event.key == "Enter") {
+        if (!event.repeat) {
+            showRecs()
+        }
+    }
+});
+
+document.getElementById("tag-search").addEventListener("input", (event) => {
+    let input = event.target.value;
+    input = input.split('')
+        .join('(.{0,1})');
+    let regex = new RegExp(`^(.*)${input}(.*)$`);
+    for (const tag of tagContainer.children) {
+        // CONS class not style attribute
+        if (!regex.test(tag.innerHTML)) {
+            tag.setAttribute("style", "display: none");
+        }
+        else {
+            tag.setAttribute("style", "");
+        }
+    }
+});
+
+// Main TODO: 
+// unban pages
+// rec pagination
+// fix scraper
+// BUG test with d-11424 tag, no results for mr_shwhale?

@@ -284,6 +284,8 @@ fn extract_links_from_syspage(
     for page in page_elements {
         let element_html = page.inner_html();
 
+        println!("{}", element_html);
+
         let captures = match name_pattern.captures(element_html.as_str()) {
             Some(cap) => cap,
             None => return Err(ScrapeError::RegexError),
@@ -304,6 +306,7 @@ fn extract_links_from_syspage(
             continue;
         }
 
+        // CONS Scrape SCP ListPages instead of this to get full titles
         let name = match captures.name("name") {
             Some(name) => String::from(name.as_str()),
             None => return Err(ScrapeError::RegexError),
@@ -447,6 +450,7 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             let page_id: u64 = page_id.parse().expect("Page ID parse failed");
 
             let document = Html::parse_document(document_text.as_str());
+            // TODO pull out this into outer thing, do with the rest too
             let selector =
                 Selector::parse(r#"div.page-tags a"#).expect("Hardcoded selector should not fail");
             let tags: Vec<_> = document
@@ -467,13 +471,31 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             article.tags = tags;
             article.page_id = page_id;
 
+            // let title_selector = Selector::parse(r#"div[id="page-title"]"#)
+            //     .expect("Hardcoded Selector, shouldn't fail");
+
+            // // BUG this doesn't work
+            // article.name = document
+            //     .select(&title_selector)
+            //     .map(|a| {
+            //         let mut inter = a.inner_html().strip_prefix([]);
+            //         let inter = match inter {
+            //             Some(string) => String::from(string),
+            //             None => a.inner_html(),
+            //         };
+
+            //         inter
+            //     })
+            //     .collect::<Vec<String>>()[0]
+            //     .clone();
+
             let text = match make_vote_request(&client, page_id) {
                 Ok(text) => text,
                 Err(e) => panic!("Multi-retry: {:?}", e),
             };
 
             // Send the user responses
-            match update_article(text, &main_tx, article) {
+            match update_article_votes(text, &main_tx, article) {
                 Err(e) => panic!("Thread error: {:?}", e),
                 _ => (),
             }
@@ -540,7 +562,7 @@ fn make_vote_request(client: &Client, page_id: u64) -> Result<String, ScrapeErro
 }
 
 /// Parse an article page, and tell the main thread about all the users in it
-fn update_article(
+fn update_article_votes(
     text: String,
     main_tx: &Sender<ThreadResponse>,
     article: &mut Article,
@@ -593,7 +615,7 @@ mod tests {
             votes_output: String::from(VOTES_OUTPUT),
         };
 
-        match scraper.scrape(8, vec!["hub"], outputs) {
+        match scraper.scrape(8, vec!["scp"], outputs) {
             Ok(_) => (),
             Err(e) => {
                 println!("Something went wrong! Specifically, this:");
