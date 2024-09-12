@@ -5,8 +5,11 @@ let isRequesting = false;
 
 let bans = undefined;
 let tagStrings = [];
+let recsPerPage = 30;
 
-// TODO store banned names for unban list
+let recs = [];
+
+// TODO add more storage checking
 if (typeof (Storage) !== "undefined") {
     // Put a placeholder value in if there are no existing bans
     if (!localStorage.getItem("bans")) {
@@ -15,6 +18,12 @@ if (typeof (Storage) !== "undefined") {
 
     // TODO add ensuring that all these are valid pids, removing others
     bans = JSON.parse(window.localStorage.getItem("bans"));
+
+    if (!localStorage.getItem("recsPerPage")) {
+        window.localStorage.setItem("recsPerPage", "30");
+    }
+
+    recsPerPage = Number.parseInt(window.localStorage.getItem("recsPerPage"));
 }
 else {
     console.log("No localStorage support. Bans will not be saved.");
@@ -81,11 +90,11 @@ async function showRecs() {
         for (const ban of bans) {
             // If this is not a valid int, ignore for now. It will be removed on reload
             // Does not consider numbers too large to be pids
-            if (ban != Number.parseInt(ban)) {
+            if (ban.pid != Number.parseInt(ban.pid)) {
                 continue;
             }
 
-            url += ban;
+            url += ban.pid;
             url += "+"
         }
         url = url.substring(0, url.length - 1);
@@ -141,65 +150,81 @@ async function showRecs() {
             let statusText = document.createElement("p");
             statusText.classList.add("status-text");
 
-            switch (json.type) {
+            switch (json.code) {
                 case "USER_PARSE_ERROR":
-                    errorElement.innerHTML = "WRONG USER FORMAT";
-                    statusText.innerHTML = "The username could not be loaded by the recommender.";
+                    errorElement.innerHTML = "USER NOT FOUND";
+                    statusText.innerHTML = "A user by that name/id could not be found by the recommender. They may not have voted enough times by the latest scrape.";
                     break;
                 case "NO_USER":
-                    errorElement.innerHTML = "USER NOT FOUND";
-                    statusText.innerHTML = "A user by that name could not be found in the recommender. Have they voted enough times?";
+                    errorElement.innerHTML = "USER NOT SENT";
+                    statusText.innerHTML = "Username was not properly sent to the server. Try again soon or create a GitHub issue if this continues";
                     break;
                 case "RECOMMENDER_ERROR":
                     errorElement.innerHTML = "RECOMMENDER ERROR";
-                    statusText.innerHTML = "Something went wrong with the recommendation process. Try again soon or contact an admin at wapatmore@gmail.com.";
+                    statusText.innerHTML = "Something went wrong with the recommendation process. Try again soon or create a GitHub issue if this continues.";
                     break;
             }
 
             recommendationsHolder.appendChild(errorElement);
             recommendationsHolder.appendChild(statusText);
 
-            throw new Error(`Valid response with error: ${json.type}`);
+            throw new Error(`Valid response with error: ${json.code}`);
         }
 
-        // Add starting dummy
-        recommendationsHolder.appendChild(document.createElement("div"));
+        recs = json;
 
-        function banId(id) {
-            return (event) => {
-                event.target.parentNode.remove();
-                bans.push(id);
-                window.localStorage.setItem("bans", JSON.stringify(bans));
-            }
-        }
-
-        for (const page of json.slice(0, 30)) {
-            const recHolder = document.createElement("div");
-            const recLink = document.createElement("a");
-            const recBan = document.createElement("button");
-
-            recLink.innerHTML = `${page.name}`;
-
-            recLink.setAttribute("href", WIKI_PREFIX + page.url);
-            recLink.setAttribute("target", "_blank");
-            recLink.classList.add("rec-link");
-
-            recBan.addEventListener("click", banId(page.pid));
-            recBan.classList.add("ban-button");
-
-            recHolder.appendChild(recBan);
-            recHolder.appendChild(recLink);
-            recHolder.classList.add("rec");
-
-            recommendationsHolder.appendChild(recHolder);
-        }
-
-        // Dummy element for functional flex formatting
-        recommendationsHolder.appendChild(document.createElement("div"));
-
+        displayRecs();
     } catch (error) {
         console.error(error.message);
     }
+}
+
+function displayRecs(pageNum) {
+    pageNum = pageNum || 0;
+
+    let recommendationsHolder = document.getElementById("rec-container");
+
+    recommendationsHolder.innerHTML = "";
+
+    // Add starting dummy for functional flex formatting
+    recommendationsHolder.appendChild(document.createElement("div"));
+
+    function banId(id, name) {
+        return (event) => {
+            event.target.parentNode.remove();
+            bans.push({ pid: id, name: name });
+            window.localStorage.setItem("bans", JSON.stringify(bans));
+            recs = recs.filter((value) => {
+                return value.pid != id;
+            });
+
+            displayRecs();
+        }
+    }
+
+    for (const page of recs.slice(pageNum * recsPerPage, (pageNum + 1) * recsPerPage)) {
+        const recHolder = document.createElement("div");
+        const recLink = document.createElement("a");
+        const recBan = document.createElement("button");
+
+        recLink.innerHTML = `${page.name}`;
+
+        recLink.setAttribute("href", WIKI_PREFIX + page.url);
+        recLink.setAttribute("target", "_blank");
+        recLink.classList.add("rec-link");
+
+        recBan.addEventListener("click", banId(page.pid, page.name));
+        recBan.classList.add("ban-button");
+
+        recHolder.appendChild(recBan);
+        recHolder.appendChild(recLink);
+        recHolder.classList.add("rec");
+
+        recommendationsHolder.appendChild(recHolder);
+    }
+
+    // Add ending dummy for functional flex formatting
+    recommendationsHolder.appendChild(document.createElement("div"));
 }
 
 document.getElementById("search-button").addEventListener('click', () => {
@@ -314,7 +339,7 @@ function autocomplete(event) {
         let shared_substr = usernames[i].substr(0, value.length);
 
         // Do not overflow into users not starting with shared_substr
-        if (shared_substr.toLowerCase() == value.toLowerCase()) {
+        if (shared_substr.toLowerCase() != value.toLowerCase()) {
             break;
         }
 
@@ -407,22 +432,88 @@ document.addEventListener("keydown", (event) => {
 
 document.getElementById("tag-search").addEventListener("input", (event) => {
     let input = event.target.value;
-    input = input.split('')
-        .join('(.{0,1})');
+    input = input
+        .split('')
+        // Sanitize
+        .map((a) => {
+            return a.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&')
+        })
+        .join('(.?)')
+    console.log(input);
     let regex = new RegExp(`^(.*)${input}(.*)$`);
     for (const tag of tagContainer.children) {
-        // CONS class not style attribute
         if (!regex.test(tag.innerHTML)) {
-            tag.setAttribute("style", "display: none");
+            tag.classList.add("indisplay");
         }
         else {
-            tag.setAttribute("style", "");
+            tag.classList.remove("indisplay");
         }
     }
 });
 
+function toggleSettings() {
+    let settingsContainer = document.getElementById("settings-container");
+    if (!settingsContainer.classList.contains("hidden")) {
+        document.getElementById("unban-holder").innerHTML = ""
+
+        let newRecCount = document.getElementById("rec-count").value;
+        if (newRecCount) {
+            try {
+                recsPerPage = Number.parseInt(newRecCount);
+
+                if (recsPerPage < 1) {
+                    recsPerPage = 30;
+                }
+                else if (recsPerPage > 500) {
+                    recsPerPage = 500;
+                }
+
+                window.localStorage.setItem("recsPerPage", recsPerPage.toString());
+            }
+            catch {
+                console.log("This is NOT working");
+            }
+        }
+
+        settingsContainer.classList.add("hidden");
+        return;
+    }
+
+    settingsContainer.classList.remove("hidden");
+
+    function unbanId(pid) {
+        return (event) => {
+            event.target.parentNode.remove();
+            bans = bans.filter((ban) => {
+                console.log(ban, pid);
+                return ban.pid != pid;
+            });
+            window.localStorage.setItem("bans", JSON.stringify(bans));
+        }
+    }
+
+    let unbanHolder = document.getElementById("unban-holder");
+    for (const ban of bans.toReversed()) {
+        const recHolder = document.createElement("div");
+        const recText = document.createElement("span");
+        const recBan = document.createElement("button");
+
+        recText.innerHTML = `${ban.name}`;
+
+        recBan.addEventListener("click", unbanId(ban.pid));
+        recBan.classList.add("ban-button");
+
+        recHolder.appendChild(recBan);
+        recHolder.appendChild(recText);
+        recHolder.classList.add("rec");
+
+        unbanHolder.appendChild(recHolder);
+    }
+
+    document.getElementById("rec-count").value = recsPerPage;
+}
+
+document.getElementById("settings-close").addEventListener("click", toggleSettings);
+
 // Main TODO: 
-// unban pages
-// rec pagination
 // fix scraper
-// BUG test with d-11424 tag, no results for mr_shwhale?

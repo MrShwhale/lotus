@@ -17,22 +17,29 @@
 /*** General styling ***/
 
 html {
-    min-height: 100%;
+    height: 100vh;
+    scrollbar-width: thin;
+    scrollbar-color: var(--foreground-color) var(--main-bg-color);
 }
 
 body {
-    display: inline;
+    display: flex;
     background: linear-gradient(to right, transparent, black 30%, black 70%, transparent),
         url("./red_fractal_swirling_hd_trippy.jpg");
     background-position: center;
     background-attachment: fixed;
     background-repeat: no-repeat;
     color: var(--main-text-color);
+    align-items: center;
+    flex-direction: column;
+    height: 100%;
+    margin: 0;
+    justify-content: space-between;
 }
 
 .page-holder {
-    margin: auto;
     width: 50%;
+    flex: 1;
 }
 
 /*** Footer ***/
@@ -54,7 +61,6 @@ footer a {
 
 .standard-border {
     border: 5px solid var(--foreground-color);
-    border-radius: var(--standard-border-radius);
 }
 
 .hidden {
@@ -65,11 +71,18 @@ footer a {
     visibility: visible;
 }
 
+.indisplay {
+    display: none;
+}
+
 /*** Header ***/
 
 .header {
-    display: block;
-    margin: auto;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 70px;
 }
 
 #lotus-svg {
@@ -81,16 +94,101 @@ footer a {
     fill: var(--alt-bg-color);
 }
 
-/* TODO offset to match lotus svg */
 .title {
-    position: relative;
+    position: absolute;
+    top: 25%;
     z-index: 2;
-    margin: -280px 0 30px;
+    margin-left: 21px;
     font-size: 200px;
     font-family: "Poppins", system-ui;
     font-weight: 800;
     text-align: center;
     user-select: none;
+}
+
+/*** Settings page ***/
+#settings-container {
+    position: fixed;
+    z-index: 4;
+    top: 10%;
+    left: 50%;
+    transform: translate(-50%, 0);
+    display: flex;
+    border-radius: var(--standard-border-radius);
+    height: 80%;
+    width: 60%;
+    background-color: var(--rec-border-color);
+}
+
+#settings-container-inner {
+    position: relative;
+    border: none;
+    background-color: var(--main-bg-color);
+    overflow-y: scroll;
+    padding: 30px;
+    scrollbar-color: var(--foreground-color) var(--main-bg-color);
+    scrollbar-width: thin;
+    scrollbar-gutter: stable both-edges;
+    font-size: 24px;
+    font-family: "Poppins", system-ui;
+}
+
+.settings-header {
+    display: flex;
+    align-items: center;
+}
+
+.settings-heading {
+    font-size: 36px;
+    font-family: "Hack", system-ui;
+    font-weight: bold;
+    flex: 1;
+    text-align: center;
+}
+
+/* CONS changing to another class */
+.settings-title{
+    padding-left: 50px;
+}
+
+#unban-holder {
+    display: flex;
+    flex-direction: column;
+    row-gap: 30px;
+}
+
+#settings-close {
+    width: 50px;
+    height: 50px;
+    /* border: 1px solid var(--foreground-color); */
+    border: none;
+    background-image: url("./return-svgrepo-com.svg");
+    background-color: transparent;
+    color: var(--alt-bg-color);
+    stroke: #ffffff;
+}
+
+.settings-message {
+    text-align: center;
+}
+
+#rec-count-holder {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#rec-count {
+    background-color: var(--alt-bg-color);
+    color: var(--main-text-color);
+    border: none;
+    font-size: 24px;
+    height: 36px;
+    width: 120px;
+}
+
+#rec-count:focus {
+    outline-width: 0;
 }
 
 /*** Tags popup ***/
@@ -108,8 +206,8 @@ footer a {
     display: flex;
     margin: 0 auto;
     border: 5px solid var(--foreground-color);
-    border-radius: 60px;
-    width: 80%;
+    border-radius: var(--standard-border-radius);
+    width: 40%;
     height: 450px;
     background-color: var(--main-bg-color);
 }
@@ -117,8 +215,9 @@ footer a {
 .scrollbar-rounder {
     display: flex;
     overflow: hidden;
-    margin: 15px;
+    margin: 30px;
     width: 100%;
+    border-radius: 30px;
 }
 
 #tags-popup-inner {
@@ -126,7 +225,9 @@ footer a {
     flex-direction: column;
     overflow-y: auto;
     flex: 1;
+    scrollbar-width: thin;
     scrollbar-color: var(--foreground-color) var(--main-bg-color);
+    scrollbar-gutter: stable both-edges;
 }
 
 #tag-search {
@@ -146,7 +247,7 @@ footer a {
 .tag {
     margin: 5px;
     border: none;
-    border-radius: 60px;
+    border-radius: var(--standard-border-radius);
     padding: 8px;
     background-color: var(--alt-bg-color);
     cursor: pointer;
@@ -175,6 +276,7 @@ footer a {
     display: flex;
     margin: 0 auto;
     height: 58px;
+    border-radius: var(--standard-border-radius);
 }
 
 .input-box {
@@ -207,10 +309,15 @@ footer a {
     cursor: pointer;
 }
 
+#unban-holder .rec {
+    margin: 0;
+}
+
 /*** Recommendation container ***/
 
 #rec-container-container {
     margin-top: 5%;
+    border-radius: var(--standard-border-radius);
     background: var(--rec-border-color);
 }
 
@@ -219,6 +326,7 @@ footer a {
     flex-direction: column;
     gap: 30px;
     margin: 30px;
+    border-radius: 30px;
     background: var(--main-bg-color);
 }
 
