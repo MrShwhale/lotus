@@ -42,6 +42,7 @@ fn main() {
                     .expect("No article limit specified")
                     .parse()
                     .expect("Article limit should be a number");
+                index += 1;
             }
             "--concurrent-requests" | "-r" => {
                 max_concurrent_requests = args
@@ -49,6 +50,7 @@ fn main() {
                     .expect("No max concurrent requests specified")
                     .parse()
                     .expect("Max concurrent requests should be a number");
+                index += 1;
             }
             "--download-delay" | "-d" => {
                 download_delay = args
@@ -56,6 +58,7 @@ fn main() {
                     .expect("No download delay specified")
                     .parse()
                     .expect("Download delay should be a number");
+                index += 1;
             }
             "--help" | "-h" => {
                 // CONS moving explanation into the README and keeping this to defaults and options

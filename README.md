@@ -15,7 +15,7 @@ The `--release` argument is very important, otherwise the recommender will be to
 
 # Running the project
 I have included sample output files from a scrape. These exist to allow users to run a basic version of the recommender immediately, and for testing purposes.
-The scrape was done on September 2nd 2024, so any actions taken on the wiki after that date will not be included.
+The scrape was done on September 12th 2024, so any actions taken on the wiki after that date will not be included.
 
 **WARNING:** The scraper, by default, scrapes the FULL wiki. This means sending around *30000 web requests*!
 It will take a while, and it will take bandwidth. Do not run this often to avoid unneeded strain on the SCP servers.

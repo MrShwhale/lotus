@@ -29,6 +29,22 @@ const TAG_PREFIX: &str = formatcp!("{}system:page-tags/tag/", WIKI_PREFIX);
 
 const WIKIDOT_TOKEN: &str = "123456";
 
+const LISTPAGES: [&str; 13] = [
+    "/scp-series",
+    "/scp-series-2",
+    "/scp-series-3",
+    "/scp-series-4",
+    "/scp-series-5",
+    "/scp-series-6",
+    "/scp-series-7",
+    "/scp-series-8",
+    "/scp-series-9",
+    "/scp-series-10",
+    "/archived-scps",
+    "/scp-ex",
+    "/joke-scps",
+];
+
 lazy_static! {
     pub static ref PAGE_ID_PATTERN: Regex =
     Regex::new(r#"WIKIREQUEST.info.pageId = (\d+);"#).expect("hardcoded regex, shouldn't fail");
@@ -61,7 +77,7 @@ impl Scraper {
 
     pub fn new_with_options(max_concurrent_requests: u8, download_delay: u64) -> Scraper {
         assert!(
-            max_concurrent_requests == 0,
+            max_concurrent_requests != 0,
             "max_concurrent_requests must be more than 0!"
         );
 
@@ -87,7 +103,7 @@ impl Scraper {
         eprintln!("{}Getting the list of tags", SCRAPER_HEADING);
         let tag_group = self.scrape_all_tags()?;
 
-        println!("{}Scraping the pages", SCRAPER_HEADING);
+        eprintln!("{}Scraping the pages", SCRAPER_HEADING);
         let scraped_info = self.scrape_pages(scrape_list, tag_group)?;
 
         scrape_writer::record_info(scraped_info, outputs)?;
@@ -97,7 +113,7 @@ impl Scraper {
 
     /// Adds all pages on the wiki to the list of pages to scrape.
     /// Pages are determined to be "on" the wiki if they have one of the major tag types (things
-    /// like "tale" or "scp"). Since articles must (I think) have exactly one of these, it is
+    /// like "tale" or "scp"). Since the target articles must have exactly one of these, it is
     /// reasonable to use this to discover pages.
     fn create_page_list(&self, tag_types: Vec<&str>) -> Result<Vec<Article>, ScrapeError> {
         let mut tag_url;
@@ -109,11 +125,18 @@ impl Scraper {
         let name_pattern = Regex::new(r#"<a href="(?<url>.+)">(?<name>.+)+</a>"#)
             .expect("Hardcoded regex shouldn't fail");
 
+        let name_map = listpages_scrape(&client, LISTPAGES.to_vec())?;
+
         for tag in tag_types.iter() {
             tag_url = String::from(TAG_PREFIX);
             tag_url.push_str(tag);
-            let mut pages =
-                extract_links_from_syspage(&client, &tag_url, &page_item, &name_pattern)?;
+            let mut pages = extract_links_from_syspage(
+                &client,
+                &tag_url,
+                &page_item,
+                &name_pattern,
+                &name_map,
+            )?;
             articles.append(&mut pages);
 
             // Avoid throttling, even at 0 delay (otherwise this is too fast).
@@ -275,6 +298,7 @@ fn extract_links_from_syspage(
     url: &str,
     page_item: &Selector,
     name_pattern: &Regex,
+    name_map: &HashMap<String, String>,
 ) -> Result<Vec<Article>, ScrapeError> {
     let response = retry_get_request(client, url)?;
     let document = Html::parse_document(response.text()?.as_str());
@@ -283,8 +307,6 @@ fn extract_links_from_syspage(
     let mut pages = Vec::new();
     for page in page_elements {
         let element_html = page.inner_html();
-
-        println!("{}", element_html);
 
         let captures = match name_pattern.captures(element_html.as_str()) {
             Some(cap) => cap,
@@ -306,10 +328,16 @@ fn extract_links_from_syspage(
             continue;
         }
 
-        // CONS Scrape SCP ListPages instead of this to get full titles
-        let name = match captures.name("name") {
-            Some(name) => String::from(name.as_str()),
-            None => return Err(ScrapeError::RegexError),
+        let name = if name_map.contains_key(&url) {
+            name_map
+                .get(&url)
+                .expect("Manually checked existence")
+                .clone()
+        } else {
+            match captures.name("name") {
+                Some(name) => String::from(name.as_str()),
+                None => return Err(ScrapeError::RegexError),
+            }
         };
 
         pages.push(Article {
@@ -471,24 +499,6 @@ fn spawn_scraper_thread<'a, 'scope, 'env>(
             article.tags = tags;
             article.page_id = page_id;
 
-            // let title_selector = Selector::parse(r#"div[id="page-title"]"#)
-            //     .expect("Hardcoded Selector, shouldn't fail");
-
-            // // BUG this doesn't work
-            // article.name = document
-            //     .select(&title_selector)
-            //     .map(|a| {
-            //         let mut inter = a.inner_html().strip_prefix([]);
-            //         let inter = match inter {
-            //             Some(string) => String::from(string),
-            //             None => a.inner_html(),
-            //         };
-
-            //         inter
-            //     })
-            //     .collect::<Vec<String>>()[0]
-            //     .clone();
-
             let text = match make_vote_request(&client, page_id) {
                 Ok(text) => text,
                 Err(e) => panic!("Multi-retry: {:?}", e),
@@ -550,7 +560,7 @@ fn make_vote_request(client: &Client, page_id: u64) -> Result<String, ScrapeErro
             }
             Err(e) => {
                 if retries >= MAX_RETRIES {
-                    println!("{}Multi-retry error: {:?}", SCRAPER_HEADING, e);
+                    eprintln!("{}Multi-retry error: {:?}", SCRAPER_HEADING, e);
                     panic!();
                 }
                 retries += 1;
@@ -590,6 +600,48 @@ fn update_article_votes(
     Ok(())
 }
 
+// CONS replacing SCP tags syspage with this
+fn listpages_scrape(
+    client: &blocking::Client,
+    listpages: Vec<&'static str>,
+) -> Result<HashMap<String, String>, ScrapeError> {
+    eprintln!("{}Getting SCP names from ListPages", SCRAPER_HEADING);
+    let mut name_map = HashMap::new();
+    let selector = Selector::parse("h1~ul>li").expect("Hardcoded selector should not fail");
+    for listpage in listpages {
+        let mut url = String::from(WIKI_PREFIX);
+        url.push_str(listpage);
+        let response = retry_get_request(client, url.as_str())?;
+        let document = Html::parse_document(response.text()?.as_str());
+        let elements = document.select(&selector);
+
+        // The first 2 elements are not actual page links
+        for element in elements.skip(3) {
+            // Store the url as the key
+            let link_element = element.first_child().unwrap().value().as_element().unwrap();
+
+            // The only class possible is newpage
+            if link_element.attr("class").is_some() {
+                continue;
+            }
+
+            let key = link_element.attr("href");
+
+            let key = match key {
+                Some(string) => String::from(&string[1..]),
+                None => continue,
+            };
+
+            // Store the text of the elements as the value
+            let value = element.text().collect::<Vec<&str>>().join("");
+
+            name_map.insert(key, value);
+        }
+    }
+
+    Ok(name_map)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -623,5 +675,13 @@ mod tests {
                 panic!();
             }
         }
+    }
+
+    #[test]
+    fn basic_listpages_scrape() {
+        let client = blocking::Client::new();
+        let name_map = listpages_scrape(&client, vec!["/scp-series"]).unwrap();
+
+        assert!(name_map.get("scp-096").unwrap() == "SCP-096 - The \"Shy Guy\"");
     }
 }
