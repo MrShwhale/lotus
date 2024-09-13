@@ -58,7 +58,6 @@ async fn main() {
                 options.with_users_to_consider(users_to_consider)
             }
             "--help" | "-h" => {
-                // CONS moving explanation into the README and keeping this to defaults and options
                 println!("Usage: lotus_web [args]\n  If an arg is passed multiple times, only the rightmost is considered.\n\n  Input file arguments:          Specify the location of different data files.\n    --article-file      or -a    Default: ./output/articles.parquet\n    --tags-file         or -t    Default: ./output/tags.parquet\n    --users-file        or -u    Default: ./output/users.parquet\n    --votes-file        or -v    Default: ./output/votes.parquet\n\n  Other options:\n      Sets the minimum number of votes required for a user to be included in recommender calculations.\n      Setting this higher reduces memory usage and speeds up recommendations, but any users with\n      fewer than this many votes will not be able to use the system, and their votes will not affect others.\n    --min-votes         or -m    Default: 10\n\n      Sets the number of similar users to consider when giving a recommendation.\n      Setting this higher gets a more diverse set of opinions, but adds more possibility of popularity bias.\n    --users-to-consider or -c    Default: 30\n\n      Display this message instead of running the system.\n    --help              or -h");
                 return;
             }
@@ -87,8 +86,7 @@ async fn main() {
 
     eprintln!("{}Starting web server...", SERVER_HEADING);
 
-    // TODO add not found service
-    let serve_dir = ServeDir::new("lotus_web/web_files");
+    let serve_dir = ServeDir::new("lotus_web/files");
 
     let state = Arc::new(recommender);
 

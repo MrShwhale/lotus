@@ -14,7 +14,6 @@ fn main() {
     let mut outputs = OutputFiles::new();
 
     while index < length {
-        // CONS add TAG_TYPES argument
         match args[index].as_str() {
             "--article-file" | "-a" => {
                 let articles_file = args.get(index + 1).expect("No article file specified");
@@ -61,7 +60,6 @@ fn main() {
                 index += 1;
             }
             "--help" | "-h" => {
-                // CONS moving explanation into the README and keeping this to defaults and options
                 eprintln!("Usage: lotus_scrape [args]\n  If an arg is passed multiple times, only the rightmost is considered.\n\n  Output file arguments:           Specify the save location of different data.\n    --article-file        or -a    Default: ./output/articles.parquet\n    --tags-file           or -t    Default: ./output/tags.parquet\n    --users-file          or -u    Default: ./output/users.parquet\n    --votes-file          or -v    Default: ./output/votes.parquet\n\n  Other options:\n    Sets the number of articles to fetch from the wiki. Each article takes about 2 web requests to get.\n    --article-limit       or -l    Default: maximum\n\n    Sets the number of requests to make at one time (the number of additional threads to make).\n    --concurrent-requests or -c    Default: 8\n\n    Sets the additional approximate delay between requests, in milliseconds.\n    This time is added in between each web request.\n    --download-delay      or -d    Default: 0\n\n    Display this message instead of running the system.\n    --help                or -h");
                 process::exit(1)
             }

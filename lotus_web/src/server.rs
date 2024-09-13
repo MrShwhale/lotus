@@ -158,5 +158,3 @@ fn recs_to_string(recommender: &Recommender, full_recs: DataFrame) -> String {
 
     serde_json::to_string(&pages).expect("Page vec should be serializeable")
 }
-
-// TODO add name autocomplete

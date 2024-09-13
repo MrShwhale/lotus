@@ -125,12 +125,12 @@ impl Scraper {
         let name_pattern = Regex::new(r#"<a href="(?<url>.+)">(?<name>.+)+</a>"#)
             .expect("Hardcoded regex shouldn't fail");
 
-        let name_map = listpages_scrape(&client, LISTPAGES.to_vec())?;
+        let name_map = self.listpages_scrape(&client, LISTPAGES.to_vec())?;
 
         for tag in tag_types.iter() {
             tag_url = String::from(TAG_PREFIX);
             tag_url.push_str(tag);
-            let mut pages = extract_links_from_syspage(
+            let mut pages = self.extract_links_from_syspage(
                 &client,
                 &tag_url,
                 &page_item,
@@ -172,7 +172,7 @@ impl Scraper {
             for (id, thread_rx) in thread_rxs.into_iter().enumerate() {
                 let tags_copy = tags_arc.clone();
                 let main_tx = main_tx.clone();
-                spawn_scraper_thread(&scope, main_tx, id, thread_rx, tags_copy);
+                self.spawn_scraper_thread(&scope, main_tx, id, thread_rx, tags_copy);
             }
 
             eprintln!("{}Actually scraping the pages...", SCRAPER_HEADING);
@@ -181,7 +181,6 @@ impl Scraper {
                 num_articles,
                 &main_rx,
                 &thread_txs,
-                self.download_delay,
                 &mut users,
             )?;
 
@@ -233,7 +232,7 @@ impl Scraper {
         let client = blocking::Client::new();
 
         eprintln!("{}Making tags page request", SCRAPER_HEADING);
-        let response = retry_get_request(&client, TAG_PREFIX)?;
+        let response = self.retry_get_request(&client, TAG_PREFIX)?;
         eprintln!("{}Getting tags page response", SCRAPER_HEADING);
         let document = Html::parse_document(response.text()?.as_str());
         let page_item = Selector::parse(".tag").expect("Hardcoded selector shouldn't fail");
@@ -247,6 +246,336 @@ impl Scraper {
 
         Ok(tag_collection)
     }
+
+    /// Retry the given request several times to avoid minor internet errors
+    fn retry_request(
+        &self,
+        client: &Client,
+        headers: &HeaderMap,
+        data: &String,
+        method: reqwest::Method,
+        url: &str,
+    ) -> Result<Response, ScrapeError> {
+        let request;
+        let mut retries = 0;
+
+        loop {
+            let response = client
+                .request(method.clone(), url)
+                .headers(headers.clone())
+                .body(data.clone())
+                .send();
+
+            match response {
+                Ok(value) => {
+                    request = value;
+                    break;
+                }
+                Err(err) => {
+                    retries += 1;
+                    if retries >= MAX_RETRIES {
+                        return Err(err.into());
+                    }
+                    thread::sleep(Duration::from_millis(self.download_delay));
+                }
+            }
+        }
+
+        Ok(request)
+    }
+
+    /// Shorthand to send a get request to the url as many times as it takes
+    fn retry_get_request(&self, client: &Client, url: &str) -> Result<Response, ScrapeError> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "user-agent",
+            "Mozilla/5.0"
+                .parse()
+                .expect("Hardcoded header shoud be valid"),
+        );
+        let data = String::new();
+        self.retry_request(client, &headers, &data, reqwest::Method::GET, url)
+    }
+
+    // CONS replacing SCP tags syspage with this
+    fn listpages_scrape(
+        &self,
+        client: &blocking::Client,
+        listpages: Vec<&'static str>,
+    ) -> Result<HashMap<String, String>, ScrapeError> {
+        eprintln!("{}Getting SCP names from ListPages", SCRAPER_HEADING);
+        let mut name_map = HashMap::new();
+        let selector = Selector::parse("h1~ul>li").expect("Hardcoded selector should not fail");
+        for listpage in listpages {
+            let mut url = String::from(WIKI_PREFIX);
+            url.push_str(listpage);
+            let response = self.retry_get_request(client, url.as_str())?;
+            let document = Html::parse_document(response.text()?.as_str());
+            let elements = document.select(&selector);
+
+            // The first 2 elements are not actual page links
+            for element in elements.skip(3) {
+                // Store the url as the key
+                let link_element = element.first_child().unwrap().value().as_element().unwrap();
+
+                // The only class possible is newpage
+                if link_element.attr("class").is_some() {
+                    continue;
+                }
+
+                let key = link_element.attr("href");
+
+                let key = match key {
+                    Some(string) => String::from(&string[1..]),
+                    None => continue,
+                };
+
+                // Store the text of the elements as the value
+                let value = element.text().collect::<Vec<&str>>().join("");
+
+                name_map.insert(key, value);
+            }
+        }
+
+        Ok(name_map)
+    }
+
+    /// Adds all articles on a system page to a Vec then returns it.
+    /// Does not add directly to the Vec to make multithreading easy.
+    /// This is blocking since this should be run before starting the real
+    /// scraper and should have a very limited number of requests.
+    fn extract_links_from_syspage(
+        &self,
+        client: &blocking::Client,
+        url: &str,
+        page_item: &Selector,
+        name_pattern: &Regex,
+        name_map: &HashMap<String, String>,
+    ) -> Result<Vec<Article>, ScrapeError> {
+        let response = self.retry_get_request(client, url)?;
+        let document = Html::parse_document(response.text()?.as_str());
+        let page_elements = document.select(page_item);
+
+        let mut pages = Vec::new();
+        for page in page_elements {
+            let element_html = page.inner_html();
+
+            let captures = match name_pattern.captures(element_html.as_str()) {
+                Some(cap) => cap,
+                None => return Err(ScrapeError::RegexError),
+            };
+
+            let url = match captures.name("url") {
+                Some(url) => String::from(
+                    url.as_str()
+                        .get(1..)
+                        .expect("Valid links should always have more than 1 char"),
+                ),
+                None => return Err(ScrapeError::RegexError),
+            };
+
+            // I admire and admonish the individual who is making me write this case
+            // TODO Fix this in a better way (check at the pid stage)
+            if url == "scp-1047-j" {
+                continue;
+            }
+
+            let name = if name_map.contains_key(&url) {
+                name_map
+                    .get(&url)
+                    .expect("Manually checked existence")
+                    .clone()
+            } else {
+                match captures.name("name") {
+                    Some(name) => String::from(name.as_str()),
+                    None => return Err(ScrapeError::RegexError),
+                }
+            };
+
+            pages.push(Article {
+                name,
+                url,
+                page_id: 0,
+                tags: Vec::new(),
+                votes: Vec::new(),
+            });
+        }
+
+        Ok(pages)
+    }
+
+    /// Create a thread within the scope that will make scraper requests
+    fn spawn_scraper_thread<'a, 'scope, 'env>(
+        &'a self,
+        scope: &'scope Scope<'scope, 'env>,
+        main_tx: Sender<ThreadResponse>,
+        id: usize,
+        thread_rx: Receiver<ThreadResponse>,
+        tags_copy: Arc<&'a mut Vec<String>>,
+    ) where
+        'a: 'scope,
+    {
+        scope.spawn(move || {
+            let client = blocking::Client::new();
+            loop {
+                // Tell main which thread needs an article
+                main_tx
+                    .send(ThreadResponse::ArticleRequest(id))
+                    .expect("The reciever should never be deallocated");
+
+                // Wait for a response
+                let article_ptr = match thread_rx
+                    .recv()
+                    .expect("The sender should never be disconnected")
+                {
+                    ThreadResponse::ArticleResponse(raw_pointer) => raw_pointer,
+                    ThreadResponse::EndRequest => {
+                        main_tx
+                            .send(ThreadResponse::Alright)
+                            .expect("The reciever should never be deallocated");
+                        break;
+                    }
+                    _ => unreachable!(),
+                };
+
+                // This is safe since the main thread only passes out one raw mutable pointer at a
+                // time.
+                let article: &mut Article = unsafe { article_ptr.get_mut_ptr() };
+
+                let url = String::from(WIKI_PREFIX) + article.url.as_str();
+
+                eprintln!("{}Request sent: {}", SCRAPER_HEADING, url);
+
+                let document_text;
+                let mut retries = 0;
+
+                // BUG you DO NOT know why this request (and the other one with a similar loop around
+                // it) sometimes send a 200 response which have EOF in the middle of chunks. Fixing
+                // this is very important, below is *NOT* a fix
+                loop {
+                    let response = self
+                        .retry_get_request(&client, &url)
+                        .expect("Too many failed web requests");
+
+                    match response.text() {
+                        Ok(other) => {
+                            document_text = other;
+                            break;
+                        }
+                        Err(e) => {
+                            if retries >= MAX_RETRIES {
+                                panic!("Multi-retry error: {:?}", e);
+                            }
+                            retries += 1;
+                        }
+                    };
+                }
+
+                eprintln!("{}Response recieved: {}", SCRAPER_HEADING, url);
+
+                let page_id_captures = PAGE_ID_PATTERN
+                    .captures(document_text.as_str())
+                    .expect("Match falied in document response");
+
+                let page_id = page_id_captures
+                    .get(1)
+                    .expect("Page ID match failed")
+                    .as_str();
+                let page_id: u64 = page_id.parse().expect("Page ID parse failed");
+
+                let document = Html::parse_document(document_text.as_str());
+                // TODO pull out this into outer thing, do with the rest too
+                let selector = Selector::parse(r#"div.page-tags a"#)
+                    .expect("Hardcoded selector should not fail");
+                let tags: Vec<_> = document
+                    .select(&selector)
+                    .map(|a| {
+                        let tag_string = a.inner_html();
+                        tags_copy
+                            .iter()
+                            .enumerate()
+                            .find(|(_, tag)| **tag == tag_string)
+                            .expect("All tags should be known by this point")
+                            .0
+                            .try_into()
+                            .expect("There should never be more tags than a u16")
+                    })
+                    .collect();
+
+                article.tags = tags;
+                article.page_id = page_id;
+
+                let text = match self.make_vote_request(&client, page_id) {
+                    Ok(text) => text,
+                    Err(e) => panic!("Multi-retry: {:?}", e),
+                };
+
+                // Send the user responses
+                match update_article_votes(text, &main_tx, article) {
+                    Err(e) => panic!("Thread error: {:?}", e),
+                    _ => (),
+                }
+            }
+        });
+    }
+
+    /// Request the vote records for a page
+    fn make_vote_request(&self, client: &Client, page_id: u64) -> Result<String, ScrapeError> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "Content-Type",
+            "application/x-www-form-urlencoded; charset=UTF-8"
+                .parse()
+                .expect("Hardcoded header should be valid"),
+        );
+        headers.insert(
+            "user-agent",
+            "Mozilla/5.0"
+                .parse()
+                .expect("Hardcoded header shoud be valid"),
+        );
+        headers.insert(
+            "Cookie",
+            format!("wikidot_token7={}", WIKIDOT_TOKEN)
+                .parse()
+                .expect("Predictable header should be valid"),
+        );
+
+        let data = format!(
+            "pageId={}&moduleName=pagerate%2FWhoRatedPageModule&wikidot_token7={}",
+            page_id, WIKIDOT_TOKEN
+        );
+
+        // Retry more times if getting EOF error
+        let text;
+        let mut retries = 0;
+
+        loop {
+            let request = self.retry_request(
+                client,
+                &headers,
+                &data,
+                reqwest::Method::POST,
+                "https://scp-wiki.wikidot.com/ajax-module-connector.php",
+            )?;
+
+            match request.text() {
+                Ok(other) => {
+                    text = other;
+                    break;
+                }
+                Err(e) => {
+                    if retries >= MAX_RETRIES {
+                        eprintln!("{}Multi-retry error: {:?}", SCRAPER_HEADING, e);
+                        panic!();
+                    }
+                    retries += 1;
+                }
+            };
+        }
+
+        Ok(text)
+    }
 }
 
 /// Run the messaging mechanism until all the articles have been sent out (though not recieved)
@@ -255,11 +584,9 @@ fn run_messaging(
     num_articles: usize,
     main_rx: &Receiver<ThreadResponse>,
     thread_txs: &Vec<Sender<ThreadResponse>>,
-    download_delay: u64,
     users: &mut HashMap<u64, User>,
 ) -> Result<(), ScrapeError> {
     let mut next_article = 0;
-    let wait_time = Duration::from_millis(download_delay);
 
     while next_article < num_articles {
         let response = main_rx.recv()?;
@@ -277,7 +604,6 @@ fn run_messaging(
                     .send(ThreadResponse::ArticleResponse(next_article_ptr))?;
 
                 next_article += 1;
-                thread::sleep(wait_time);
             }
             ThreadResponse::UserInfo(user) => {
                 users.insert(user.user_id, user);
@@ -287,288 +613,6 @@ fn run_messaging(
     }
 
     Ok(())
-}
-
-/// Adds all articles on a system page to a Vec then returns it.
-/// Does not add directly to the Vec to make multithreading easy.
-/// This is blocking since this should be run before starting the real
-/// scraper and should have a very limited number of requests.
-fn extract_links_from_syspage(
-    client: &blocking::Client,
-    url: &str,
-    page_item: &Selector,
-    name_pattern: &Regex,
-    name_map: &HashMap<String, String>,
-) -> Result<Vec<Article>, ScrapeError> {
-    let response = retry_get_request(client, url)?;
-    let document = Html::parse_document(response.text()?.as_str());
-    let page_elements = document.select(page_item);
-
-    let mut pages = Vec::new();
-    for page in page_elements {
-        let element_html = page.inner_html();
-
-        let captures = match name_pattern.captures(element_html.as_str()) {
-            Some(cap) => cap,
-            None => return Err(ScrapeError::RegexError),
-        };
-
-        let url = match captures.name("url") {
-            Some(url) => String::from(
-                url.as_str()
-                    .get(1..)
-                    .expect("Valid links should always have more than 1 char"),
-            ),
-            None => return Err(ScrapeError::RegexError),
-        };
-
-        // I admire and admonish the individual who is making me write this case
-        // TODO Fix this in a better way (check at the pid stage)
-        if url == "scp-1047-j" {
-            continue;
-        }
-
-        let name = if name_map.contains_key(&url) {
-            name_map
-                .get(&url)
-                .expect("Manually checked existence")
-                .clone()
-        } else {
-            match captures.name("name") {
-                Some(name) => String::from(name.as_str()),
-                None => return Err(ScrapeError::RegexError),
-            }
-        };
-
-        pages.push(Article {
-            name,
-            url,
-            page_id: 0,
-            tags: Vec::new(),
-            votes: Vec::new(),
-        });
-    }
-
-    Ok(pages)
-}
-
-/// Shorthand to send a get request to the url as many times as it takes
-fn retry_get_request(client: &Client, url: &str) -> Result<Response, ScrapeError> {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "user-agent",
-        "Mozilla/5.0"
-            .parse()
-            .expect("Hardcoded header shoud be valid"),
-    );
-    let data = String::new();
-    retry_request(client, &headers, &data, reqwest::Method::GET, url)
-}
-
-/// Retry the given request several times to avoid minor internet errors
-fn retry_request(
-    client: &Client,
-    headers: &HeaderMap,
-    data: &String,
-    method: reqwest::Method,
-    url: &str,
-) -> Result<Response, ScrapeError> {
-    let request;
-    let mut retries = 0;
-
-    loop {
-        let response = client
-            .request(method.clone(), url)
-            .headers(headers.clone())
-            .body(data.clone())
-            .send();
-
-        match response {
-            Ok(value) => {
-                request = value;
-                break;
-            }
-            Err(err) => {
-                retries += 1;
-                if retries >= MAX_RETRIES {
-                    return Err(err.into());
-                }
-            }
-        }
-    }
-
-    Ok(request)
-}
-
-/// Create a thread within the scope that will make scraper requests
-fn spawn_scraper_thread<'a, 'scope, 'env>(
-    scope: &'scope Scope<'scope, 'env>,
-    main_tx: Sender<ThreadResponse>,
-    id: usize,
-    thread_rx: Receiver<ThreadResponse>,
-    tags_copy: Arc<&'a mut Vec<String>>,
-) where
-    'a: 'scope,
-{
-    scope.spawn(move || {
-        let client = blocking::Client::new();
-        loop {
-            // Tell main which thread needs an article
-            main_tx
-                .send(ThreadResponse::ArticleRequest(id))
-                .expect("The reciever should never be deallocated");
-
-            // Wait for a response
-            let article_ptr = match thread_rx
-                .recv()
-                .expect("The sender should never be disconnected")
-            {
-                ThreadResponse::ArticleResponse(raw_pointer) => raw_pointer,
-                ThreadResponse::EndRequest => {
-                    main_tx
-                        .send(ThreadResponse::Alright)
-                        .expect("The reciever should never be deallocated");
-                    break;
-                }
-                _ => unreachable!(),
-            };
-
-            // This is safe since the main thread only passes out one raw mutable pointer at a
-            // time.
-            let article: &mut Article = unsafe { article_ptr.get_mut_ptr() };
-
-            let url = String::from(WIKI_PREFIX) + article.url.as_str();
-
-            eprintln!("{}Request sent: {}", SCRAPER_HEADING, url);
-
-            let document_text;
-            let mut retries = 0;
-
-            // BUG you DO NOT know why this request (and the other one with a similar loop around
-            // it) sometimes send a 200 response which have EOF in the middle of chunks. Fixing
-            // this is very important, below is *NOT* a fix
-            loop {
-                let response =
-                    retry_get_request(&client, &url).expect("Too many failed web requests");
-
-                match response.text() {
-                    Ok(other) => {
-                        document_text = other;
-                        break;
-                    }
-                    Err(e) => {
-                        if retries >= MAX_RETRIES {
-                            panic!("Multi-retry error: {:?}", e);
-                        }
-                        retries += 1;
-                    }
-                };
-            }
-
-            eprintln!("{}Response recieved: {}", SCRAPER_HEADING, url);
-
-            let page_id_captures = PAGE_ID_PATTERN
-                .captures(document_text.as_str())
-                .expect("Match falied in document response");
-
-            let page_id = page_id_captures
-                .get(1)
-                .expect("Page ID match failed")
-                .as_str();
-            let page_id: u64 = page_id.parse().expect("Page ID parse failed");
-
-            let document = Html::parse_document(document_text.as_str());
-            // TODO pull out this into outer thing, do with the rest too
-            let selector =
-                Selector::parse(r#"div.page-tags a"#).expect("Hardcoded selector should not fail");
-            let tags: Vec<_> = document
-                .select(&selector)
-                .map(|a| {
-                    let tag_string = a.inner_html();
-                    tags_copy
-                        .iter()
-                        .enumerate()
-                        .find(|(_, tag)| **tag == tag_string)
-                        .expect("All tags should be known by this point")
-                        .0
-                        .try_into()
-                        .expect("There should never be more tags than a u16")
-                })
-                .collect();
-
-            article.tags = tags;
-            article.page_id = page_id;
-
-            let text = match make_vote_request(&client, page_id) {
-                Ok(text) => text,
-                Err(e) => panic!("Multi-retry: {:?}", e),
-            };
-
-            // Send the user responses
-            match update_article_votes(text, &main_tx, article) {
-                Err(e) => panic!("Thread error: {:?}", e),
-                _ => (),
-            }
-        }
-    });
-}
-
-/// Request the vote records for a page
-fn make_vote_request(client: &Client, page_id: u64) -> Result<String, ScrapeError> {
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        "Content-Type",
-        "application/x-www-form-urlencoded; charset=UTF-8"
-            .parse()
-            .expect("Hardcoded header should be valid"),
-    );
-    headers.insert(
-        "user-agent",
-        "Mozilla/5.0"
-            .parse()
-            .expect("Hardcoded header shoud be valid"),
-    );
-    headers.insert(
-        "Cookie",
-        format!("wikidot_token7={}", WIKIDOT_TOKEN)
-            .parse()
-            .expect("Predictable header should be valid"),
-    );
-
-    let data = format!(
-        "pageId={}&moduleName=pagerate%2FWhoRatedPageModule&wikidot_token7={}",
-        page_id, WIKIDOT_TOKEN
-    );
-
-    // Retry more times if getting EOF error
-    let text;
-    let mut retries = 0;
-
-    loop {
-        let request = retry_request(
-            client,
-            &headers,
-            &data,
-            reqwest::Method::POST,
-            "https://scp-wiki.wikidot.com/ajax-module-connector.php",
-        )?;
-
-        match request.text() {
-            Ok(other) => {
-                text = other;
-                break;
-            }
-            Err(e) => {
-                if retries >= MAX_RETRIES {
-                    eprintln!("{}Multi-retry error: {:?}", SCRAPER_HEADING, e);
-                    panic!();
-                }
-                retries += 1;
-            }
-        };
-    }
-
-    Ok(text)
 }
 
 /// Parse an article page, and tell the main thread about all the users in it
@@ -598,48 +642,6 @@ fn update_article_votes(
     }
 
     Ok(())
-}
-
-// CONS replacing SCP tags syspage with this
-fn listpages_scrape(
-    client: &blocking::Client,
-    listpages: Vec<&'static str>,
-) -> Result<HashMap<String, String>, ScrapeError> {
-    eprintln!("{}Getting SCP names from ListPages", SCRAPER_HEADING);
-    let mut name_map = HashMap::new();
-    let selector = Selector::parse("h1~ul>li").expect("Hardcoded selector should not fail");
-    for listpage in listpages {
-        let mut url = String::from(WIKI_PREFIX);
-        url.push_str(listpage);
-        let response = retry_get_request(client, url.as_str())?;
-        let document = Html::parse_document(response.text()?.as_str());
-        let elements = document.select(&selector);
-
-        // The first 2 elements are not actual page links
-        for element in elements.skip(3) {
-            // Store the url as the key
-            let link_element = element.first_child().unwrap().value().as_element().unwrap();
-
-            // The only class possible is newpage
-            if link_element.attr("class").is_some() {
-                continue;
-            }
-
-            let key = link_element.attr("href");
-
-            let key = match key {
-                Some(string) => String::from(&string[1..]),
-                None => continue,
-            };
-
-            // Store the text of the elements as the value
-            let value = element.text().collect::<Vec<&str>>().join("");
-
-            name_map.insert(key, value);
-        }
-    }
-
-    Ok(name_map)
 }
 
 #[cfg(test)]
@@ -680,7 +682,10 @@ mod tests {
     #[test]
     fn basic_listpages_scrape() {
         let client = blocking::Client::new();
-        let name_map = listpages_scrape(&client, vec!["/scp-series"]).unwrap();
+        let scraper = Scraper::new();
+        let name_map = &scraper
+            .listpages_scrape(&client, vec!["/scp-series"])
+            .unwrap();
 
         assert!(name_map.get("scp-096").unwrap() == "SCP-096 - The \"Shy Guy\"");
     }
