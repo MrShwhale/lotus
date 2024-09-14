@@ -5,14 +5,14 @@ edition = "2021"
 authors = ["William Patmore <wapatmore@gmail.com>"]
 
 [dependencies]
-arrow-array = "52.1.0"
-arrow-schema = "52.1.0"
-const_format = "0.2.32"
+arrow-array = "53.0.0"
+arrow-schema = "53.0.0"
+const_format = "0.2.33"
 http = "1.1.0"
 lazy_static = "1.5.0"
 lotus = { path = "../" }
-parquet = "52.1.0"
-regex = "1.10.5"
-reqwest = { version = "0.12.5", features = ["blocking"] }
-scraper = "0.19.1"
-serde = { version = "1.0.204", features = ["derive"] }
+parquet = "53.0.0"
+regex = "1.10.6"
+reqwest = { version = "0.12.7", features = ["blocking"] }
+scraper = "0.20.0"
+serde = { version = "1.0.210", features = ["derive"] }
