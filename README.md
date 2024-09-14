@@ -5,29 +5,87 @@ This project has two main parts:
 - A web scraper, which gets information off of the SCP wiki, including the often overlooked rating information.
 - And a web sever, which also runs a recommendation system, using the information gathered by the scraper.
 
-# Building
+# Building from source
 
-To build the scraper, use `cargo build lotus_scrape --release`.
+To build the scraper, use `cargo build -p lotus_scrape --release`.
 
-To build the web server, use `cargo build lotus_web --release`.
+To build the web server, use `cargo build -p lotus_web --release`.
 
 The `--release` argument is very important, otherwise the recommender will be too slow to provide a good user experience.
 
-# Running the project
+# Running the project from source
 I have included sample output files from a scrape. These exist to allow users to run a basic version of the recommender immediately, and for testing purposes.
 The scrape was done on September 12th 2024, so any actions taken on the wiki after that date will not be included.
 
-**WARNING:** The scraper, by default, scrapes the FULL wiki. This means sending around *30000 web requests*!
+**WARNING:** The scraper, by default, scrapes the FULL wiki. This means sending over *30000 web requests*!
 It will take a while, and it will take bandwidth. Do not run this often to avoid unneeded strain on the SCP servers.
 
-To run the scraper, use `cargo run lotus_scrape --release`.
+To run the scraper, use `cargo run -p lotus_scrape --release`.
 
-To run the web server, use `cargo run lotus_web --release`.
+To run the web server, use `cargo run -p lotus_web --release`.
+
+The `--release` argument is very important, otherwise the recommender will be too slow to provide a good user experience.
+
+These commands should be run from the `lotus` folder in the given folder structure.
 
 ## Command line arguments
 
-## Using the project
+Both programs have various command line arguments, which can be used to customize functionality easily.
 
+The --help (or -h) arguments will print this information instead of running the program.
+
+### Wiki Scraper
+```
+Usage: lotus_scrape [args]
+  If an arg is passed multiple times, only the rightmost is considered.
+
+  Output file arguments:           Specify the save location of different data.
+    --article-file        or -a    Default: ./output/articles.parquet
+    --tags-file           or -t    Default: ./output/tags.parquet
+    --users-file          or -u    Default: ./output/users.parquet
+    --votes-file          or -v    Default: ./output/votes.parquet
+
+  Other options:
+    Sets the number of articles to fetch from the wiki. Each article takes about 2 web requests to get.
+    --article-limit       or -l    Default: maximum
+
+    Sets the number of requests to make at one time (the number of additional threads to make).
+    --concurrent-requests or -c    Default: 8
+
+    Sets the additional approximate delay between requests, in milliseconds.
+    This time is added in between each web request.
+    --download-delay      or -d    Default: 0
+
+    Display this message instead of running the system.
+    --help                or -h
+```
+
+### Web Server
+```
+Usage: lotus_web [args]
+  If an arg is passed multiple times, only the rightmost is considered.
+
+  Input file arguments:          Specify the location of different data files.
+    --article-file      or -a    Default: ./output/articles.parquet
+    --tags-file         or -t    Default: ./output/tags.parquet
+    --users-file        or -u    Default: ./output/users.parquet
+    --votes-file        or -v    Default: ./output/votes.parquet
+
+  Other options:
+      Sets the minimum number of votes required for a user to be included in recommender calculations.
+      Setting this higher reduces memory usage and speeds up recommendations, but any users with
+      fewer than this many votes will not be able to use the system, and their votes will not affect others.
+    --min-votes         or -m    Default: 10
+
+      Sets the number of similar users to consider when giving a recommendation.
+      Setting this higher gets a more diverse set of opinions, but adds more possibility of popularity bias.
+    --users-to-consider or -c    Default: 30
+
+      Display this message instead of running the system.
+    --help              or -h
+```
+
+## Using the project
 In order to have the best user experience, this system needs to have up-to-date information about votes and articles on the wiki.
 However, constantly scraping the SCP wiki would put a lot of strain on their servers, for little benefit (not much changes hour-to-hour).
 
@@ -52,8 +110,6 @@ This all comes together to show that while valuable, ratings are not enough to h
 LOTUS seeks to help solve that issue. By having a more personalized, less popularity-influenced system of getting recommendations, users should be able to find articles they like more.
 It should also help get articles with fewer votes due to their niche target audience be fully appreciated.
 
-And if it doesn't end up working for people, at least it was fun to make (and gave me some cool articles to read).
-
 ## How does it work?
 The recommendations come from a collaborative filtering system. Since who voted on each page is publicly available, by looking at this info across every article, similar users can be found.
 Since similar users like similar things by definition, it is then as simple as find pages which the most similar users liked but the current user has not read. These are the recommendations.
@@ -61,11 +117,9 @@ This process has some additional steps, but that is the core idea behind the sys
 
 ## Why is it in Rust?
 Speed is very important for a good user experience. If it takes even a few seconds to get a recommendation, the system will feel very unresponsive.
-
 When I started this project, I wanted to do it in Python. This, despite being very well documented and easy to use, led to long wait times, many memory issues, and no obvious way forward for me.
-
 So, I decided to use Rust for its speed and memory safety, especially across threads. I also think it's a lot of fun to write, so it was a great choice.
 
 ## Why LOTUS?
 The name, LOTUS, is a reference to [SCP-6488](https://scp-wiki.wikidot.com/scp-6488), which is about an AI that destroys all other AI so that it doesn't become evil.
-It's one of my favorites, and since it dealt with AI I thought it was a good fit.
+It's one of my favorites, and since both it and this deal with AI I think it is a good fit.
