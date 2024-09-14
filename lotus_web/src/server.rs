@@ -117,6 +117,7 @@ pub async fn get_rec(
     recs_to_string(&recommender, top_recs)
 }
 
+// Get a JSON encoded version of a recommendation DataFrame
 fn recs_to_string(recommender: &Recommender, full_recs: DataFrame) -> String {
     let pages: Vec<_> = full_recs
         .column("pid")

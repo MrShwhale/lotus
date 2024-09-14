@@ -146,157 +146,7 @@ impl Scraper {
         Ok(articles)
     }
 
-    /// Scrapes the links to the given articles, overwriting existing data in each element
-    fn scrape_pages(
-        &self,
-        mut articles: Vec<Article>,
-        mut tags: Vec<String>,
-    ) -> Result<ScrapeInfo, ScrapeError> {
-        let num_articles = articles.len();
-        let num_threads = self.max_concurrent_requests;
-
-        let mut users = HashMap::new();
-
-        // Create the message passing mechanism
-        let (main_tx, main_rx) = mpsc::channel();
-        let (thread_txs, thread_rxs): (Vec<_>, Vec<_>) =
-            (0..num_threads).map(|_| mpsc::channel()).unzip();
-
-        let tags_arc = Arc::new(&mut tags);
-
-        // Create the threads
-        eprintln!("{}Creating the threads...", SCRAPER_HEADING);
-        lazy_static::initialize(&PAGE_ID_PATTERN);
-        lazy_static::initialize(&USER_PATTERN);
-        thread::scope(|scope| {
-            for (id, thread_rx) in thread_rxs.into_iter().enumerate() {
-                let tags_copy = tags_arc.clone();
-                let main_tx = main_tx.clone();
-                self.spawn_scraper_thread(&scope, main_tx, id, thread_rx, tags_copy);
-            }
-
-            eprintln!("{}Actually scraping the pages...", SCRAPER_HEADING);
-            run_messaging(
-                &mut articles,
-                num_articles,
-                &main_rx,
-                &thread_txs,
-                &mut users,
-            )?;
-
-            // Ask threads to stop
-            for thread_tx in thread_txs.iter() {
-                // Any dead threads mean the scope is going to panic otherwise, so leave gracefully
-                // now
-                if let Err(_) = thread_tx.send(ThreadResponse::EndRequest) {
-                    return Err(ScrapeError::ThreadError);
-                };
-            }
-
-            // Wait for all to stop
-            let mut num_alive = num_threads;
-            while num_alive > 0 {
-                let thread_message = match main_rx.recv() {
-                    Ok(message) => message,
-                    Err(_) => return Err(ScrapeError::ThreadError),
-                };
-
-                match thread_message {
-                    ThreadResponse::Alright | ThreadResponse::ArticleRequest(_) => num_alive -= 1,
-                    // Though they have all been told to stop, threads only recieve requests after
-                    // sending all remaining user info, so it has to be handlede as well
-                    ThreadResponse::UserInfo(user) => {
-                        users.insert(user.user_id, user);
-                    }
-                    _ => unreachable!(),
-                };
-            }
-
-            Ok(())
-        })?;
-
-        let scraped_info = ScrapeInfo {
-            articles,
-            users,
-            tags,
-        };
-
-        Ok(scraped_info)
-    }
-
-    /// Adds all tags on the wiki to the collection of tags.
-    /// This avoids having to build the taglist manually from the pages, which saves a lot of
-    /// complexity when multithreading
-    fn scrape_all_tags(&self) -> Result<Vec<String>, ScrapeError> {
-        let mut tag_collection = Vec::new();
-        let client = blocking::Client::new();
-
-        eprintln!("{}Making tags page request", SCRAPER_HEADING);
-        let response = self.retry_get_request(&client, TAG_PREFIX)?;
-        eprintln!("{}Getting tags page response", SCRAPER_HEADING);
-        let document = Html::parse_document(response.text()?.as_str());
-        let page_item = Selector::parse(".tag").expect("Hardcoded selector shouldn't fail");
-        let page_elements = document.select(&page_item);
-
-        for page in page_elements {
-            let element_html = page.inner_html();
-
-            tag_collection.push(element_html);
-        }
-
-        Ok(tag_collection)
-    }
-
-    /// Retry the given request several times to avoid minor internet errors
-    fn retry_request(
-        &self,
-        client: &Client,
-        headers: &HeaderMap,
-        data: &String,
-        method: reqwest::Method,
-        url: &str,
-    ) -> Result<Response, ScrapeError> {
-        let request;
-        let mut retries = 0;
-
-        loop {
-            let response = client
-                .request(method.clone(), url)
-                .headers(headers.clone())
-                .body(data.clone())
-                .send();
-
-            match response {
-                Ok(value) => {
-                    request = value;
-                    break;
-                }
-                Err(err) => {
-                    retries += 1;
-                    if retries >= MAX_RETRIES {
-                        return Err(err.into());
-                    }
-                    thread::sleep(Duration::from_millis(self.download_delay));
-                }
-            }
-        }
-
-        Ok(request)
-    }
-
-    /// Shorthand to send a get request to the url as many times as it takes
-    fn retry_get_request(&self, client: &Client, url: &str) -> Result<Response, ScrapeError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "user-agent",
-            "Mozilla/5.0"
-                .parse()
-                .expect("Hardcoded header shoud be valid"),
-        );
-        let data = String::new();
-        self.retry_request(client, &headers, &data, reqwest::Method::GET, url)
-    }
-
+    /// Scrapes the SCP ListPages in order to get the extra titles of the object articles.
     fn listpages_scrape(
         &self,
         client: &blocking::Client,
@@ -374,7 +224,6 @@ impl Scraper {
             };
 
             // I admire and admonish the individual who is making me write this case
-            // TODO Fix this in a better way (check at the pid stage)
             if url == "scp-1047-j" {
                 continue;
             }
@@ -401,6 +250,107 @@ impl Scraper {
         }
 
         Ok(pages)
+    }
+
+    /// Adds all tags on the wiki to the collection of tags.
+    /// This avoids having to build the taglist manually from the pages, which saves a lot of
+    /// complexity when multithreading
+    fn scrape_all_tags(&self) -> Result<Vec<String>, ScrapeError> {
+        let mut tag_collection = Vec::new();
+        let client = blocking::Client::new();
+
+        eprintln!("{}Making tags page request", SCRAPER_HEADING);
+        let response = self.retry_get_request(&client, TAG_PREFIX)?;
+        eprintln!("{}Getting tags page response", SCRAPER_HEADING);
+        let document = Html::parse_document(response.text()?.as_str());
+        let page_item = Selector::parse(".tag").expect("Hardcoded selector shouldn't fail");
+        let page_elements = document.select(&page_item);
+
+        for page in page_elements {
+            let element_html = page.inner_html();
+
+            tag_collection.push(element_html);
+        }
+
+        Ok(tag_collection)
+    }
+
+    /// Scrapes the links to the given articles, overwriting existing data in each element
+    fn scrape_pages(
+        &self,
+        mut articles: Vec<Article>,
+        mut tags: Vec<String>,
+    ) -> Result<ScrapeInfo, ScrapeError> {
+        let num_articles = articles.len();
+        let num_threads = self.max_concurrent_requests;
+
+        let mut users = HashMap::new();
+
+        // Create the message passing mechanism
+        let (main_tx, main_rx) = mpsc::channel();
+        let (thread_txs, thread_rxs): (Vec<_>, Vec<_>) =
+            (0..num_threads).map(|_| mpsc::channel()).unzip();
+
+        let tags_arc = Arc::new(&mut tags);
+
+        // Create the threads
+        eprintln!("{}Creating the threads...", SCRAPER_HEADING);
+        lazy_static::initialize(&PAGE_ID_PATTERN);
+        lazy_static::initialize(&USER_PATTERN);
+        thread::scope(|scope| {
+            for (id, thread_rx) in thread_rxs.into_iter().enumerate() {
+                let tags_copy = tags_arc.clone();
+                let main_tx = main_tx.clone();
+                self.spawn_scraper_thread(&scope, main_tx, id, thread_rx, tags_copy);
+            }
+
+            eprintln!("{}Actually scraping the pages...", SCRAPER_HEADING);
+            run_messaging(
+                &mut articles,
+                num_articles,
+                &main_rx,
+                &thread_txs,
+                &mut users,
+            )?;
+
+            // Ask threads to stop
+            for thread_tx in thread_txs.iter() {
+                // Any dead threads mean the scope is going to panic otherwise, so leave gracefully
+                // now
+                if let Err(_) = thread_tx.send(ThreadResponse::EndRequest) {
+                    return Err(ScrapeError::ThreadError);
+                };
+            }
+
+            // Wait for all to stop
+            let mut num_alive = num_threads;
+            while num_alive > 0 {
+                let thread_message = match main_rx.recv() {
+                    Ok(message) => message,
+                    Err(_) => return Err(ScrapeError::ThreadError),
+                };
+
+                match thread_message {
+                    ThreadResponse::Alright | ThreadResponse::ArticleRequest(_) => num_alive -= 1,
+                    // Though they have all been told to stop, threads only recieve requests after
+                    // sending all remaining user info, so it has to be handlede as well
+                    ThreadResponse::UserInfo(user) => {
+                        users.insert(user.user_id, user);
+                    }
+                    _ => unreachable!(),
+                };
+            }
+
+            Ok(())
+        })?;
+
+        let scraped_info = ScrapeInfo {
+            articles,
+            users,
+            tags,
+        };
+
+        Ok(scraped_info)
     }
 
     /// Create a thread within the scope that will make scraper requests
@@ -571,6 +521,56 @@ impl Scraper {
         }
 
         Ok(text)
+    }
+
+    /// Shorthand to send a get request to the url as many times as it takes
+    fn retry_get_request(&self, client: &Client, url: &str) -> Result<Response, ScrapeError> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "user-agent",
+            "Mozilla/5.0"
+                .parse()
+                .expect("Hardcoded header shoud be valid"),
+        );
+        let data = String::new();
+        self.retry_request(client, &headers, &data, reqwest::Method::GET, url)
+    }
+
+    /// Retry the given request several times to avoid minor internet errors
+    fn retry_request(
+        &self,
+        client: &Client,
+        headers: &HeaderMap,
+        data: &String,
+        method: reqwest::Method,
+        url: &str,
+    ) -> Result<Response, ScrapeError> {
+        let request;
+        let mut retries = 0;
+
+        loop {
+            let response = client
+                .request(method.clone(), url)
+                .headers(headers.clone())
+                .body(data.clone())
+                .send();
+
+            match response {
+                Ok(value) => {
+                    request = value;
+                    break;
+                }
+                Err(err) => {
+                    retries += 1;
+                    if retries >= MAX_RETRIES {
+                        return Err(err.into());
+                    }
+                    thread::sleep(Duration::from_millis(self.download_delay));
+                }
+            }
+        }
+
+        Ok(request)
     }
 }
 

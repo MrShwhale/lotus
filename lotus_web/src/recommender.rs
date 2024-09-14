@@ -44,7 +44,6 @@ impl Recommender {
         Self::new_with_options(&RecommenderOptions::new())
     }
 
-    /// Creates a new recommender with the provided settings
     pub fn new_with_options(options: &RecommenderOptions) -> Result<Recommender, RecommenderError> {
         let page_frame = set_up_page_frame(options.get_articles_file())?;
         let user_frame = set_up_user_frame(options.get_users_file())?;
@@ -283,6 +282,8 @@ impl Recommender {
         ))
     }
 
+    // Filter out any articles from a set of recommendations that do not have one of the listed
+    // tags.
     fn filter_by_tags(
         &self,
         recommendations: &mut DataFrame,
