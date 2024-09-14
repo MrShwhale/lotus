@@ -3,7 +3,8 @@ use lotus_web::{
     recommender::{Recommender, RecommenderOptions},
     server, SERVER_HEADING,
 };
-use std::{env, process, sync::Arc};
+use std::io::prelude::*;
+use std::{env, fs::File, process, sync::Arc};
 use tower_http::services::ServeDir;
 
 #[tokio::main]
@@ -85,6 +86,18 @@ async fn main() {
     };
 
     eprintln!("{}Starting web server...", SERVER_HEADING);
+
+    // Write some things to json files in the files folder
+    let tags = recommender.get_tags();
+    let tags = serde_json::to_string(&tags).expect("Tags should always be serializable");
+    let mut tags_file = File::create("lotus_web/files/tags.json").unwrap();
+    write!(tags_file, "{}", tags).unwrap();
+
+    let usernames = recommender.get_users_list();
+    let usernames =
+        serde_json::to_string(&usernames).expect("Usernames should always be serializable");
+    let mut usernames_file = File::create("lotus_web/files/usernames.json").unwrap();
+    write!(usernames_file, "{}", usernames).unwrap();
 
     let serve_dir = ServeDir::new("lotus_web/files");
 

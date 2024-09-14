@@ -297,7 +297,6 @@ impl Scraper {
         self.retry_request(client, &headers, &data, reqwest::Method::GET, url)
     }
 
-    // CONS replacing SCP tags syspage with this
     fn listpages_scrape(
         &self,
         client: &blocking::Client,
@@ -415,6 +414,9 @@ impl Scraper {
     ) where
         'a: 'scope,
     {
+        let tag_selector =
+            Selector::parse(r#"div.page-tags a"#).expect("Hardcoded selector should not fail");
+
         scope.spawn(move || {
             let client = blocking::Client::new();
             loop {
@@ -449,9 +451,6 @@ impl Scraper {
                 let document_text;
                 let mut retries = 0;
 
-                // BUG you DO NOT know why this request (and the other one with a similar loop around
-                // it) sometimes send a 200 response which have EOF in the middle of chunks. Fixing
-                // this is very important, below is *NOT* a fix
                 loop {
                     let response = self
                         .retry_get_request(&client, &url)
@@ -484,11 +483,8 @@ impl Scraper {
                 let page_id: u64 = page_id.parse().expect("Page ID parse failed");
 
                 let document = Html::parse_document(document_text.as_str());
-                // TODO pull out this into outer thing, do with the rest too
-                let selector = Selector::parse(r#"div.page-tags a"#)
-                    .expect("Hardcoded selector should not fail");
                 let tags: Vec<_> = document
-                    .select(&selector)
+                    .select(&tag_selector)
                     .map(|a| {
                         let tag_string = a.inner_html();
                         tags_copy

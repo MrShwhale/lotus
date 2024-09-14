@@ -21,19 +21,26 @@ struct Recommendation {
 #[derive(Template)]
 #[template(path = "index.html")]
 pub struct RootTemplate {
-    tags: String,
-    usernames: String,
+    tag_elements: String,
 }
 
 /// Display the homepage
 pub async fn root(State(recommender): State<Arc<Recommender>>) -> RootTemplate {
-    let tags = recommender.get_tags();
-    let tags = serde_json::to_string(&tags).expect("Tags should always be serializable");
+    let rec_tags = recommender.get_tags();
 
-    let usernames = recommender.get_users_list();
-    let usernames =
-        serde_json::to_string(&usernames).expect("Usernames should always be serializable");
-    RootTemplate { tags, usernames }
+    // Capacity is definately at least the 29 characters per HTML tag plus a minimum of 1 character
+    // per tag name.
+    let mut tag_elements = String::with_capacity(30 * rec_tags.len());
+
+    for tag in rec_tags {
+        let mut tag_element = String::from("<button class=\"tag\">");
+        tag_element.push_str(tag);
+        tag_element.push_str("</button>");
+
+        tag_elements.push_str(tag_element.as_str());
+    }
+
+    RootTemplate { tag_elements }
 }
 
 /// Returns a list of recommendations in JSON format with the given params

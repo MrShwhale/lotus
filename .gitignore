@@ -12,3 +12,5 @@ Cargo.lock
 /output_backup
 output_backup.zip
 /logs
+/lotus_web/files/tags.json
+/lotus_web/files/usernames.json

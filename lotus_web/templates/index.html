@@ -24,6 +24,7 @@
                     <input class="input-box" id="tag-search" type="text" placeholder="SEARCH TAGS" name="tag" value=""
                         autocomplete="off">
                     <div id="tag-container">
+                        {{tag_elements| safe}}
                     </div>
                 </div>
             </div>
@@ -90,9 +91,6 @@
         <a href="javascript:toggleSettings()" id="settings-link">Settings</a>
     </footer>
 
-    <!-- TODO Change to be in json files-->
-    <script>const tags = {{tags| safe}}</script>
-    <script>const usernames = {{usernames| safe}}</script>
     <script src="files/script.js"></script>
 </body>
 
