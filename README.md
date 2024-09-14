@@ -6,7 +6,7 @@ This project has two main parts:
 - And a web sever, which also runs a recommendation system, using the information gathered by the scraper.
 
 # Running the project from the releases tab
-Simply download the zip for your architecture, unzip it, then run the programs.
+Simply download the zip, unzip it, then run the programs.
 File read/write permissions are required for both the scraper and the web server.
 
 # Building from source
