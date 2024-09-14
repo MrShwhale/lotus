@@ -8,8 +8,8 @@
     --lotus-outline: #000000;
     --muted-foreground-color: #9B4141;
     --standard-border-radius: 60px;
-    --main-font: "Hack", "Source Code Pro", monospace;
-    --mono-font: "Poppins", sans-serif;
+    --main-font: "Poppins", sans-serif;
+    --mono-font: "Hack", "Source Code Pro", monospace;
 }
 
 /*** General styling ***/
@@ -259,7 +259,6 @@ footer a {
 .search-bar-container {
     display: flex;
     margin: 0 auto;
-    /* min-width: 500px; */
     height: 58px;
     border-radius: var(--standard-border-radius);
 }

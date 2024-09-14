@@ -62,27 +62,32 @@ Usage: lotus_scrape [args]
 
 ### Web Server
 ```
-Usage: lotus_web [args]
+Usage: lotus_scrape [args]
   If an arg is passed multiple times, only the rightmost is considered.
 
-  Input file arguments:          Specify the location of different data files.
-    --article-file      or -a    Default: ./output/articles.parquet
-    --tags-file         or -t    Default: ./output/tags.parquet
-    --users-file        or -u    Default: ./output/users.parquet
-    --votes-file        or -v    Default: ./output/votes.parquet
+  Output file arguments:           Specify the save location of different data.
+    --article-file        or -a    Default: ./output/articles.parquet
+    --tags-file           or -t    Default: ./output/tags.parquet
+    --users-file          or -u    Default: ./output/users.parquet
+    --votes-file          or -v    Default: ./output/votes.parquet
 
   Other options:
-      Sets the minimum number of votes required for a user to be included in recommender calculations.
-      Setting this higher reduces memory usage and speeds up recommendations, but any users with
-      fewer than this many votes will not be able to use the system, and their votes will not affect others.
-    --min-votes         or -m    Default: 10
+    Sets the number of articles to fetch from the wiki. Each article takes about 2 web requests to get.
+    --article-limit       or -l    Default: maximum
 
-      Sets the number of similar users to consider when giving a recommendation.
-      Setting this higher gets a more diverse set of opinions, but adds more possibility of popularity bias.
-    --users-to-consider or -c    Default: 30
+    Sets the number of requests to make at one time (the number of additional threads to make).
+    --concurrent-requests or -c    Default: 8
 
-      Display this message instead of running the system.
-    --help              or -h
+    Sets the additional approximate delay between requests, in milliseconds.
+    This time is added in between each web request.
+    --download-delay      or -d    Default: 0
+
+    Sets the address that the server will listen for connections on. Should be a valid ip with a trailing port.
+    See the default for a format example.
+    --address             or -i    Default: 0.0.0.0:3000
+
+    Display this message instead of running the system.
+    --help                or -h
 ```
 
 ## Using the project

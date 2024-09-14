@@ -16,6 +16,8 @@ async fn main() {
     let mut index = 1;
     let length = args.len();
 
+    let mut ip = "0.0.0.0:3000";
+
     while index < length {
         options = match args[index].as_str() {
             "--article-file" | "-a" => {
@@ -58,8 +60,13 @@ async fn main() {
                 index += 1;
                 options.with_users_to_consider(users_to_consider)
             }
+            "--address" | "ip" => {
+                ip = args.get(index + 1).expect("No users to consider specified");
+                index += 1;
+                options
+            }
             "--help" | "-h" => {
-                println!("Usage: lotus_web [args]\n  If an arg is passed multiple times, only the rightmost is considered.\n\n  Input file arguments:          Specify the location of different data files.\n    --article-file      or -a    Default: ./output/articles.parquet\n    --tags-file         or -t    Default: ./output/tags.parquet\n    --users-file        or -u    Default: ./output/users.parquet\n    --votes-file        or -v    Default: ./output/votes.parquet\n\n  Other options:\n      Sets the minimum number of votes required for a user to be included in recommender calculations.\n      Setting this higher reduces memory usage and speeds up recommendations, but any users with\n      fewer than this many votes will not be able to use the system, and their votes will not affect others.\n    --min-votes         or -m    Default: 10\n\n      Sets the number of similar users to consider when giving a recommendation.\n      Setting this higher gets a more diverse set of opinions, but adds more possibility of popularity bias.\n    --users-to-consider or -c    Default: 30\n\n      Display this message instead of running the system.\n    --help              or -h");
+                println!("Usage: lotus_scrape [args]\n  If an arg is passed multiple times, only the rightmost is considered.\n\n  Output file arguments:           Specify the save location of different data.\n    --article-file        or -a    Default: ./output/articles.parquet\n    --tags-file           or -t    Default: ./output/tags.parquet\n    --users-file          or -u    Default: ./output/users.parquet\n    --votes-file          or -v    Default: ./output/votes.parquet\n\n  Other options:\n    Sets the number of articles to fetch from the wiki. Each article takes about 2 web requests to get.\n    --article-limit       or -l    Default: maximum\n\n    Sets the number of requests to make at one time (the number of additional threads to make).\n    --concurrent-requests or -c    Default: 8\n\n    Sets the additional approximate delay between requests, in milliseconds.\n    This time is added in between each web request.\n    --download-delay      or -d    Default: 0\n\n    Sets the address that the server will listen for connections on. Should be a valid ip with a trailing port.\n    See the default for a format example.\n    --address             or -i    Default: 0.0.0.0:3000\n\n    Display this message instead of running the system.\n    --help                or -h");
                 return;
             }
             other => {
@@ -109,10 +116,10 @@ async fn main() {
         .nest_service("/files", serve_dir)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+    let listener = tokio::net::TcpListener::bind(ip)
         .await
         .expect("Error starting listener");
-    eprintln!("{}Web server up!", SERVER_HEADING);
+    eprintln!("{}Web server listening on port: {}", SERVER_HEADING, ip);
 
     axum::serve(listener, app)
         .await
