@@ -40,6 +40,11 @@ async fn main() {
                 index += 1;
                 options.with_votes_file(votes_file.clone())
             }
+            "--address" | "-i" => {
+                ip = args.get(index + 1).expect("No users to consider specified");
+                index += 1;
+                options
+            }
             "--min-votes" | "-m" => {
                 let min_votes = args
                     .get(index + 1)
@@ -49,7 +54,7 @@ async fn main() {
                 index += 1;
                 options.with_min_votes(min_votes)
             }
-            "--users-to-consider" | "c" => {
+            "--users-to-consider" | "-c" => {
                 let users_to_consider = args
                     .get(index + 1)
                     .expect("No users to consider specified")
@@ -60,13 +65,8 @@ async fn main() {
                 index += 1;
                 options.with_users_to_consider(users_to_consider)
             }
-            "--address" | "ip" => {
-                ip = args.get(index + 1).expect("No users to consider specified");
-                index += 1;
-                options
-            }
             "--help" | "-h" => {
-                println!("Usage: lotus_scrape [args]\n  If an arg is passed multiple times, only the rightmost is considered.\n\n  Output file arguments:           Specify the save location of different data.\n    --article-file        or -a    Default: ./output/articles.parquet\n    --tags-file           or -t    Default: ./output/tags.parquet\n    --users-file          or -u    Default: ./output/users.parquet\n    --votes-file          or -v    Default: ./output/votes.parquet\n\n  Other options:\n    Sets the number of articles to fetch from the wiki. Each article takes about 2 web requests to get.\n    --article-limit       or -l    Default: maximum\n\n    Sets the number of requests to make at one time (the number of additional threads to make).\n    --concurrent-requests or -c    Default: 8\n\n    Sets the additional approximate delay between requests, in milliseconds.\n    This time is added in between each web request.\n    --download-delay      or -d    Default: 0\n\n    Sets the address that the server will listen for connections on. Should be a valid ip with a trailing port.\n    See the default for a format example.\n    --address             or -i    Default: 0.0.0.0:3000\n\n    Display this message instead of running the system.\n    --help                or -h");
+                println!("Usage: lotus_web [args]\n  If an arg is passed multiple times, only the rightmost is considered.\n\n  Output file arguments:           Specify the save location of different data.\n    --article-file        or -a    Default: .outputarticles.parquet\n    --tags-file           or -t    Default: .outputtags.parquet\n    --users-file          or -u    Default: .outputusers.parquet\n    --votes-file          or -v    Default: .outputvotes.parquet\n\n  Other options:\n    Sets the ip address to listen for connections on, with the port specified.\n    See the default for formatting example.\n    --address           or -i    Default: 0.0.0.0:3000\n\n    Sets the minimum number of votes each user must have to be included in the recommender.\n    Setting this too low slows recommendation speed and uses a lot of memory.\n    However, any users with less than this many votes will not be considered for recommendations.\n    --min-votes         or -m    Default: 10\n\n    Sets the number of similar users to consider for each recommendation.\n    Setting this too high leads to more popularity bias and slightly slower recommendations.\n    However, it also takes more user opinions into account, which potentially gives varied recommendations.\n    --users-to-consider or -c    Default: 0\n\n    Display this message instead of running the system.\n    --help              or -h");
                 return;
             }
             other => {

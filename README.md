@@ -5,7 +5,14 @@ This project has two main parts:
 - A web scraper, which gets information off of the SCP wiki, including the often overlooked rating information.
 - And a web sever, which also runs a recommendation system, using the information gathered by the scraper.
 
+# Running the project from the releases tab
+Simply download the zip for your architecture, unzip it, then run the programs.
+File read/write permissions are required for both the scraper and the web server.
+
 # Building from source
+
+This project uses Rust version `1.82.0-nightly`.
+A nightly build is required so that SIMD instructions can be used by external libraries to maximize performance.
 
 To build the scraper, use `cargo build -p lotus_scrape --release`.
 
@@ -39,7 +46,7 @@ The --help (or -h) arguments will print this information instead of running the 
 Usage: lotus_scrape [args]
   If an arg is passed multiple times, only the rightmost is considered.
 
-  Output file arguments:           Specify the save location of different data.
+  Output file arguments:           Specify the save location for different data.
     --article-file        or -a    Default: ./output/articles.parquet
     --tags-file           or -t    Default: ./output/tags.parquet
     --users-file          or -u    Default: ./output/users.parquet
@@ -57,12 +64,11 @@ Usage: lotus_scrape [args]
     --download-delay      or -d    Default: 0
 
     Display this message instead of running the system.
-    --help                or -h
-```
+    --help                or -h ```
 
 ### Web Server
 ```
-Usage: lotus_scrape [args]
+Usage: lotus_web [args]
   If an arg is passed multiple times, only the rightmost is considered.
 
   Output file arguments:           Specify the save location of different data.
@@ -72,22 +78,22 @@ Usage: lotus_scrape [args]
     --votes-file          or -v    Default: ./output/votes.parquet
 
   Other options:
-    Sets the number of articles to fetch from the wiki. Each article takes about 2 web requests to get.
-    --article-limit       or -l    Default: maximum
+    Sets the ip address to listen for connections on, with the port specified.
+    See the default for formatting example.
+    --address           or -i    Default: 0.0.0.0:3000
 
-    Sets the number of requests to make at one time (the number of additional threads to make).
-    --concurrent-requests or -c    Default: 8
+    Sets the minimum number of votes each user must have to be included in the recommender.
+    Setting this too low slows recommendation speed and uses a lot of memory.
+    However, any users with less than this many votes will not be considered for recommendations.
+    --min-votes         or -m    Default: 10
 
-    Sets the additional approximate delay between requests, in milliseconds.
-    This time is added in between each web request.
-    --download-delay      or -d    Default: 0
-
-    Sets the address that the server will listen for connections on. Should be a valid ip with a trailing port.
-    See the default for a format example.
-    --address             or -i    Default: 0.0.0.0:3000
+    Sets the number of similar users to consider for each recommendation.
+    Setting this too high leads to more popularity bias and slightly slower recommendations.
+    However, it also takes more user opinions into account, which potentially gives varied recommendations.
+    --users-to-consider or -c    Default: 0
 
     Display this message instead of running the system.
-    --help                or -h
+    --help              or -h
 ```
 
 ## Using the project
@@ -100,8 +106,8 @@ Since it only takes a few seconds to start the server, this means only a few sec
 A sample script, which would be paired with a weekly/monthly `cronjob`, is [included in this project](start_server.sh).
 
 # About
-The SCP wiki recently reached 20,000 articles, spanning just about every genre and level of quality.
-Some of these include some of my favorite pieces of media, while others are clearly middle schoolers' first writings.
+The SCP wiki is the largest collaborative fiction project in the world, recently reaching 20,000 pages, spanning just about every genre and level of quality.
+Some of these are my favorite pieces of media, while others are clearly middle schoolers' first writings.
 It can be hard to find things that you really like in this massive mixed bag, so in order to determine good from bad, the wiki knew they needed some kind of indication of quality.
 Hopefully, this system would make it easier for users to find articles that they truly loved.
 
