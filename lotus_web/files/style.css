@@ -1,21 +1,18 @@
-/* CONS adding fallback fonts */
 /* TODO add minimum widths to many things, test on devices */
 
 /*** Variable definitions ***/
-
 :root {
-    --main-bg-color: black;
+    --main-bg-color: #000000;
     --alt-bg-color: #333333;
     --main-text-color: #BEBEBE;
     --foreground-color: #CF0F0A;
     --rec-border-color: #CF0F0A40;
-    --lotus-outline: black;
+    --lotus-outline: #000000;
     --muted-foreground-color: #9B4141;
     --standard-border-radius: 60px;
 }
 
 /*** General styling ***/
-
 html {
     height: 100vh;
     scrollbar-width: thin;
@@ -24,30 +21,26 @@ html {
 
 body {
     display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    margin: 0;
+    height: 100%;
     background: linear-gradient(to right, transparent, black 30%, black 70%, transparent),
         url("./red_fractal_swirling_hd_trippy.jpg");
     background-position: center;
     background-attachment: fixed;
     background-repeat: no-repeat;
     color: var(--main-text-color);
-    align-items: center;
-    flex-direction: column;
-    height: 100%;
-    margin: 0;
-    justify-content: space-between;
 }
 
-.page-holder {
-    width: 50%;
+.page-container {
     flex: 1;
+    width: 50%;
 }
 
 /*** Footer ***/
-
 footer {
-    position: sticky;
-    top: 100vh;
-    /* CONS This may be a plat-dependent hack */
     padding: 7px 15px 15px 15px;
     font-family: "Hack", system-ui;
     text-align: center;
@@ -58,7 +51,6 @@ footer a {
 }
 
 /*** Helper classes ***/
-
 .standard-border {
     border: 5px solid var(--foreground-color);
 }
@@ -67,16 +59,11 @@ footer a {
     visibility: hidden;
 }
 
-.show {
-    visibility: visible;
-}
-
 .indisplay {
     display: none;
 }
 
 /*** Header ***/
-
 .header {
     position: relative;
     display: flex;
@@ -138,7 +125,7 @@ footer a {
     align-items: center;
 }
 
-.settings-heading {
+.settings-section-heading {
     font-size: 36px;
     font-family: "Hack", system-ui;
     font-weight: bold;
@@ -146,24 +133,23 @@ footer a {
     text-align: center;
 }
 
-/* CONS changing to another class */
-.settings-title{
+#settings-title {
     padding-left: 50px;
 }
 
-#unban-holder {
+#unban-container {
     display: flex;
     flex-direction: column;
     row-gap: 30px;
 }
 
 #settings-close {
+    border: none;
     width: 50px;
     height: 50px;
-    /* border: 1px solid var(--foreground-color); */
-    border: none;
-    background-image: url("./return-svgrepo-com.svg");
+    background-image: url("./return.svg");
     background-color: transparent;
+    cursor: pointer;
     color: var(--alt-bg-color);
     stroke: #ffffff;
 }
@@ -172,7 +158,7 @@ footer a {
     text-align: center;
 }
 
-#rec-count-holder {
+#rec-count-container {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -192,8 +178,7 @@ footer a {
 }
 
 /*** Tags popup ***/
-
-.popup-holder {
+.popup-container {
     position: relative;
     width: 100%;
     height: 0;
@@ -266,7 +251,6 @@ footer a {
 }
 
 /*** User search bar ***/
-
 #user-search {
     width: 100%;
     height: 100%;
@@ -275,6 +259,7 @@ footer a {
 .search-bar-container {
     display: flex;
     margin: 0 auto;
+    /* min-width: 500px; */
     height: 58px;
     border-radius: var(--standard-border-radius);
 }
@@ -309,12 +294,11 @@ footer a {
     cursor: pointer;
 }
 
-#unban-holder .rec {
+#unban-container .rec {
     margin: 0;
 }
 
 /*** Recommendation container ***/
-
 #rec-container-container {
     margin-top: 5%;
     border-radius: var(--standard-border-radius);
@@ -392,7 +376,6 @@ footer a {
 }
 
 /*** User autocomplete ***/
-
 .user-ac-parent {
     position: relative;
     display: inline-block;
@@ -401,7 +384,7 @@ footer a {
     min-width: 0;
 }
 
-.user-ac-holder div {
+.user-ac-container div {
     border-bottom: 2px solid var(--main-bg-color);
     padding: 8px;
     font-size: 18px;
@@ -410,11 +393,11 @@ footer a {
     cursor: pointer;
 }
 
-.user-ac-holder div:hover {
+.user-ac-container div:hover {
     background-color: var(--main-text-color);
 }
 
-.user-ac-holder div:hover span {
+.user-ac-container div:hover span {
     color: var(--foreground-color);
 }
 

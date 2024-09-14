@@ -1,4 +1,7 @@
+// The number of results to show when autocorrecting
 const MAX_RESULTS = 5;
+
+// Prefix of the SCP wiki
 const WIKI_PREFIX = "https://scp-wiki.wikidot.com/";
 
 let isRequesting = false;
@@ -57,7 +60,6 @@ function binarySearchIndex(value, array, start, end, compare) {
 }
 
 // Retrieves and displays recommendations for the given user with the given settings
-// TODO add more rate limiting
 async function showRecs() {
     if (isRequesting) {
         console.log("Already requesting!")
@@ -81,19 +83,25 @@ async function showRecs() {
             url += tagId;
             url += "+";
         }
+
         // Get rid of trailing plus 
         url = url.substring(0, url.length - 1);
     }
 
     if (bans.length > 0) {
         url += "&bans=";
-        for (const ban of bans) {
-            // If this is not a valid int, ignore for now. It will be removed on reload
-            // Does not consider numbers too large to be pids
-            if (ban.pid != Number.parseInt(ban.pid)) {
-                continue;
-            }
 
+        // Filter out anything crazy
+        let oldLen = bans.length;
+        bans = bans.filter((item) => {
+            return item.hasOwnProperty('pid') && item.hasOwnProperty('name') && item.pid == Number.parseInt(item.pid);
+        });
+
+        if (oldLen != bans.length) {
+            window.localStorage.setItem("bans", JSON.stringify(bans));
+        }
+
+        for (const ban of bans) {
             url += ban.pid;
             url += "+"
         }
@@ -179,9 +187,7 @@ async function showRecs() {
     }
 }
 
-function displayRecs(pageNum) {
-    pageNum = pageNum || 0;
-
+function displayRecs() {
     let recommendationsHolder = document.getElementById("rec-container");
 
     recommendationsHolder.innerHTML = "";
@@ -202,7 +208,7 @@ function displayRecs(pageNum) {
         }
     }
 
-    for (const page of recs.slice(pageNum * recsPerPage, (pageNum + 1) * recsPerPage)) {
+    for (const page of recs.slice(0, recsPerPage)) {
         const recHolder = document.createElement("div");
         const recLink = document.createElement("a");
         const recBan = document.createElement("button");
@@ -258,7 +264,6 @@ function toggleTag(event) {
     // Take out the element so the indices are correct
     event.target.remove();
 
-    // TODO Make sure this is consistent with other binary search (who cares?)
     let low = 0;
     let high = tagContainer.children.length - 1;
 
@@ -291,7 +296,6 @@ for (const tag of tagContainer.children) {
 }
 
 function toggleTagPopup() {
-    // Clear tag filters
     document.getElementById("tag-search").value = "";
     document.getElementById("tags-popup").classList.toggle("hidden");
 }
@@ -300,7 +304,6 @@ document.getElementById("tag-select-button").addEventListener('click', toggleTag
 
 let userSearchElement = document.getElementById("user-search");
 
-// TODO rewrite all of this to be not bad
 let acSelected = -1;
 
 function compareNames(name1, name2) {
@@ -454,7 +457,7 @@ document.getElementById("tag-search").addEventListener("input", (event) => {
 function toggleSettings() {
     let settingsContainer = document.getElementById("settings-container");
     if (!settingsContainer.classList.contains("hidden")) {
-        document.getElementById("unban-holder").innerHTML = ""
+        document.getElementById("unban-container").innerHTML = ""
 
         let newRecCount = document.getElementById("rec-count").value;
         if (newRecCount) {
@@ -492,7 +495,7 @@ function toggleSettings() {
         }
     }
 
-    let unbanHolder = document.getElementById("unban-holder");
+    let unbanHolder = document.getElementById("unban-container");
     for (const ban of bans.toReversed()) {
         const recHolder = document.createElement("div");
         const recText = document.createElement("span");
@@ -514,6 +517,3 @@ function toggleSettings() {
 }
 
 document.getElementById("settings-close").addEventListener("click", toggleSettings);
-
-// Main TODO: 
-// fix scraper
