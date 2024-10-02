@@ -79,7 +79,7 @@ pub async fn get_rec(
 
     let tags: Vec<u16> = if let Some(tag_string) = tag_param {
         tag_string
-            .split("+")
+            .split(" ")
             .map(|tag| tag.parse().unwrap())
             .collect()
     } else {
