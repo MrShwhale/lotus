@@ -64,7 +64,8 @@ Usage: lotus_scrape [args]
     --download-delay      or -d    Default: 0
 
     Display this message instead of running the system.
-    --help                or -h ```
+    --help                or -h
+```
 
 ### Web Server
 ```
