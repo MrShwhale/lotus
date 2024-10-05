@@ -135,3 +135,6 @@ So, I decided to use Rust for its speed and memory safety, especially across thr
 ## Why LOTUS?
 The name, LOTUS, is a reference to [SCP-6488](https://scp-wiki.wikidot.com/scp-6488), which is about an AI that destroys all other AI so that it doesn't become evil.
 It's one of my favorites, and since both it and this deal with AI I think it is a good fit.
+
+# Sources
+Website background image: https://www.hdwallpapers.in/red_fractal_swirling_hd_trippy-wallpapers.html
