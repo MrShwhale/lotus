@@ -137,4 +137,7 @@ The name, LOTUS, is a reference to [SCP-6488](https://scp-wiki.wikidot.com/scp-6
 It's one of my favorites, and since both it and this deal with AI I think it is a good fit.
 
 # Sources
-Website background image: https://www.hdwallpapers.in/red_fractal_swirling_hd_trippy-wallpapers.html
+Lotus svg (recolored from original): https://commons.wikimedia.org/wiki/File:Lotus.svg
+Tags icon (recolored from original): https://www.svgrepo.com/svg/391706/tags
+Search icon (recolored from original): https://www.svgrepo.com/svg/260047/magnifying-glass-search
+Background image (black gradient added): https://www.hdwallpapers.in/red_fractal_swirling_hd_trippy-wallpapers.html
