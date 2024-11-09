@@ -138,6 +138,9 @@ It's one of my favorites, and since both it and this deal with AI I think it is 
 
 # Sources
 Lotus svg (recolored from original): https://commons.wikimedia.org/wiki/File:Lotus.svg
+
 Tags icon (recolored from original): https://www.svgrepo.com/svg/391706/tags
+
 Search icon (recolored from original): https://www.svgrepo.com/svg/260047/magnifying-glass-search
+
 Background image (black gradient added): https://www.hdwallpapers.in/red_fractal_swirling_hd_trippy-wallpapers.html
